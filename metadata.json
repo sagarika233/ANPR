@@ -1,0 +1,5 @@
+{
+  "name": "Sentinel AI - ANPR Control Center",
+  "description": "A high-end Automatic Number Plate Recognition (ANPR) control center with real-time detection, analytics, and historical search.",
+  "requestFramePermissions": ["camera"]
+}
