@@ -12,7 +12,7 @@ export interface DetectionResult {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const detectPlate = async (base64Image: string, retryCount = 0): Promise<DetectionResult | null> => {
+export const detectPlate = async (base64Image: string, retryCount = 0): Promise<DetectionResult[] | null> => {
   const MAX_RETRIES = 6;
   const models = [
     "gemini-3.1-flash-lite-preview", 
@@ -46,16 +46,16 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
             },
           },
           {
-            text: `You are an expert ANPR system. Analyze the provided frame to detect the license plate.
+            text: `You are an expert ANPR system. Analyze the provided frame to detect ALL visible license plates.
             
-            Perform a multi-pass analysis:
+            Perform a multi-pass analysis for each plate:
             - Pass 1: Detect the license plate number.
             - Pass 2: Identify the vehicle's make (e.g., Toyota, Maruti Suzuki, Honda) and model (e.g., Camry, Swift, City).
             - Pass 3: Cross-reference visual cues to resolve ambiguities in blurred or pixelated characters.
             
-            Return the most accurate plate number, confidence score (0-1), bounding box coordinates, and the vehicle's make and model.
+            Return a list of detections. For each, include the plate number, confidence score (0-1), bounding box coordinates, and the vehicle's make and model.
             If it's an Indian plate, ensure it follows the standard format (e.g., MH12AB1234 or DL1CA1234).
-            Return ONLY a valid JSON object.`,
+            Return ONLY a valid JSON object with a 'detections' array.`,
           },
         ],
       },
@@ -64,40 +64,50 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            plate: { type: Type.STRING },
-            confidence: { type: Type.NUMBER },
-            make: { type: Type.STRING },
-            model: { type: Type.STRING },
-            bbox: {
-              type: Type.OBJECT,
-              properties: {
-                x: { type: Type.NUMBER },
-                y: { type: Type.NUMBER },
-                width: { type: Type.NUMBER },
-                height: { type: Type.NUMBER },
-              },
-              required: ["x", "y", "width", "height"],
-            },
-            is_blurry: { type: Type.BOOLEAN },
+            detections: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  plate: { type: Type.STRING },
+                  confidence: { type: Type.NUMBER },
+                  make: { type: Type.STRING },
+                  model: { type: Type.STRING },
+                  bbox: {
+                    type: Type.OBJECT,
+                    properties: {
+                      x: { type: Type.NUMBER },
+                      y: { type: Type.NUMBER },
+                      width: { type: Type.NUMBER },
+                      height: { type: Type.NUMBER },
+                    },
+                    required: ["x", "y", "width", "height"],
+                  },
+                  is_blurry: { type: Type.BOOLEAN },
+                },
+                required: ["plate", "confidence"],
+              }
+            }
           },
-          required: ["plate", "confidence"],
+          required: ["detections"],
         },
       },
     });
 
     const result = JSON.parse(response.text);
+    const detections: DetectionResult[] = result.detections || [];
     
     // Regex validation for Indian plates (Refined)
-    // Format: [State(2)][District(2)][Series(1 or 2)][Number(4)]
-    // Also handles older formats or temporary ones
     const indianPlatePattern = /^[A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4}$/;
-    const cleanedPlate = result.plate.replace(/[^A-Z0-9]/g, '').toUpperCase();
     
-    if (indianPlatePattern.test(cleanedPlate)) {
-      result.confidence = Math.min(result.confidence + 0.15, 1.0);
-    }
+    detections.forEach(det => {
+      const cleanedPlate = det.plate.replace(/[^A-Z0-9]/g, '').toUpperCase();
+      if (indianPlatePattern.test(cleanedPlate)) {
+        det.confidence = Math.min(det.confidence + 0.15, 1.0);
+      }
+    });
 
-    return result;
+    return detections;
   } catch (error: any) {
     console.error(`ANPR Detection Error (Attempt ${retryCount + 1}):`, error);
 

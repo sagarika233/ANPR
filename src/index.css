@@ -1,69 +1,50 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Manrope:wght@400;500;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-headline: "Manrope", sans-serif;
-
-  --color-surface: #001039;
-  --color-surface-low: #00174b;
-  --color-surface-high: #12275a;
-  --color-surface-highest: #1f3266;
-  --color-surface-bright: #23376a;
   
-  --color-primary-container: #006aff;
-  --color-secondary-container: #571bc1;
+  --color-surface: #0f172a;
+  --color-surface-low: #020617;
+  --color-surface-high: #1e293b;
+  --color-surface-highest: #334155;
   
-  --color-primary: #b2c5ff;
-  --color-tertiary: #4cd6ff;
-  --color-error: #ffb4ab;
+  --color-primary: #3b82f6;
+  --color-primary-container: #1d4ed8;
   
-  --color-on-surface: #dbe1ff;
-  --color-on-surface-variant: #c2c6d8;
+  --color-secondary: #64748b;
+  --color-secondary-container: #475569;
+  
+  --color-tertiary: #0ea5e9;
+  
+  --color-error: #ef4444;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  
+  --color-on-surface: #f8fafc;
+  --color-on-surface-variant: #94a3b8;
 }
 
 @layer base {
   body {
-    @apply bg-surface text-on-surface font-sans;
+    @apply bg-surface-low text-on-surface font-sans antialiased;
   }
 }
 
-.glass-panel {
-  @apply backdrop-blur-xl border border-white/5;
-  background-color: rgba(35, 55, 106, 0.4);
-}
-
-.hud-bracket {
-  position: absolute;
-  width: 0.75rem;
-  height: 0.75rem;
-  border-color: var(--color-tertiary);
-}
-
-.hud-bracket-tl {
-  top: 0;
-  left: 0;
-  border-top-width: 2px;
-  border-left-width: 2px;
-}
-
-.hud-bracket-tr {
-  top: 0;
-  right: 0;
-  border-top-width: 2px;
-  border-right-width: 2px;
-}
-
-.hud-bracket-bl {
-  bottom: 0;
-  left: 0;
-  border-bottom-width: 2px;
-  border-left-width: 2px;
-}
-
-.hud-bracket-br {
-  bottom: 0;
-  right: 0;
-  border-bottom-width: 2px;
-  border-right-width: 2px;
+@layer components {
+  .glass-panel {
+    @apply bg-surface-high/50 backdrop-blur-md border border-white/5;
+  }
+  
+  .card-shadow {
+    @apply shadow-[0_1px_3px_0_rgba(0,0,0,0.1),0_1px_2px_-1px_rgba(0,0,0,0.1)];
+  }
+  
+  .hud-bracket {
+    @apply absolute w-3 h-3 border-primary/40;
+  }
+  .hud-bracket-tl { @apply top-0 left-0 border-t-2 border-l-2; }
+  .hud-bracket-tr { @apply top-0 right-0 border-t-2 border-r-2; }
+  .hud-bracket-bl { @apply bottom-0 left-0 border-b-2 border-l-2; }
+  .hud-bracket-br { @apply bottom-0 right-0 border-b-2 border-r-2; }
 }

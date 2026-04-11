@@ -4,10 +4,20 @@ import {
   StopCircle, 
   PlayCircle,
   CloudUpload, 
+  Download,
   Activity, 
   Database, 
   ExternalLink,
-  CameraOff
+  CameraOff,
+  Camera,
+  Maximize2,
+  Settings as SettingsIcon,
+  Clock,
+  MapPin,
+  AlertCircle,
+  TrendingUp,
+  Shield,
+  Zap
 } from 'lucide-react';
 import { detectPlate, saveDetectionToBackend, DetectionResult } from '../services/anprService';
 import { useSettings } from '../context/SettingsContext';
@@ -23,9 +33,19 @@ export default function LiveView() {
   const [hasNetworkError, setHasNetworkError] = useState(false);
   const [quotaUsed, setQuotaUsed] = useState(0);
   const [liveDetections, setLiveDetections] = useState<any[]>([]);
-  const [currentDetection, setCurrentDetection] = useState<DetectionResult | null>(null);
+  const [currentDetections, setCurrentDetections] = useState<DetectionResult[]>([]);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [systemActivities, setSystemActivities] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [stats, setStats] = useState({
+    todayDetections: 0,
+    activeCameras: 1,
+    watchlistHits: 0,
+    avgConfidence: 0,
+    detectionsChange: 0,
+    confidenceChange: 0
+  });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -33,16 +53,42 @@ export default function LiveView() {
   const streamRef = useRef<MediaStream | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const detectionIntervalRef = useRef<number | null>(null);
+  const downloadLinkRef = useRef<HTMLAnchorElement>(null);
 
   // WebSocket Connection
   useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        setStats(data);
+      } catch (err) {
+        console.error("Error fetching stats:", err);
+      }
+    };
+
+    fetchStats();
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
     
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === 'NEW_DETECTION') {
-        setLiveDetections(prev => [message.data, ...prev].slice(0, 50));
+        setLiveDetections(prev => [message.data, ...prev].slice(0, 10));
+        // Refresh stats when new detection arrives
+        fetchStats();
+      } else if (message.type === 'SYSTEM_ACTIVITY') {
+        setSystemActivities(prev => [message.data, ...prev].slice(0, 15));
+        
+        // Add notification
+        const newNotif = { ...message.data, id: Date.now() };
+        setNotifications(prev => [...prev, newNotif]);
+        
+        // Auto-remove notification after 5s
+        setTimeout(() => {
+          setNotifications(prev => prev.filter(n => n.id !== newNotif.id));
+        }, 5000);
       }
     };
 
@@ -52,124 +98,118 @@ export default function LiveView() {
 
   // Real-time Detection Loop
   useEffect(() => {
-    if (isDetecting && !isInitializing && !isCoolingDown) {
-      detectionIntervalRef.current = window.setInterval(async () => {
-        if (videoRef.current && canvasRef.current) {
-          const canvas = canvasRef.current;
-          const video = videoRef.current;
-          const context = canvas.getContext('2d');
+    let interval: number | null = null;
+
+    const runDetection = async () => {
+      if (videoRef.current && canvasRef.current) {
+        const canvas = canvasRef.current;
+        const video = videoRef.current;
+        const context = canvas.getContext('2d');
+        
+        if (context) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
           
-          if (context) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const base64Image = canvas.toDataURL('image/jpeg', 0.8);
+          try {
+            const results = await detectPlate(base64Image);
+            setQuotaUsed(prev => prev + 1);
             
-            const base64Image = canvas.toDataURL('image/jpeg', 0.8);
-            try {
-              const result = await detectPlate(base64Image);
-              setQuotaUsed(prev => prev + 1);
+            if (results && results.length > 0) {
+              setIsQuotaExceeded(false);
+              setIsCoolingDown(false);
+              setHasNetworkError(false);
+              setQuotaRetryTime(null);
               
-              if (result) {
-                setIsQuotaExceeded(false);
-                setIsCoolingDown(false);
-                setHasNetworkError(false);
-                setQuotaRetryTime(null);
-                if (result.confidence * 100 >= settings.confidenceThreshold) {
-                  setCurrentDetection(result);
-                  await saveDetectionToBackend(result);
-                  
-                  // Clear detection overlay after 2 seconds
-                  setTimeout(() => setCurrentDetection(null), 2000);
+              const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
+              if (validDetections.length > 0) {
+                setCurrentDetections(validDetections);
+                for (const det of validDetections) {
+                  await saveDetectionToBackend(det);
                 }
-              } else {
-                // If result is null, it might be a network error or other transient issue
-                setIsCoolingDown(true);
-                setHasNetworkError(true);
-                setTimeout(() => setIsCoolingDown(false), 15000);
+                
+                // Clear detection overlay after 4 seconds to ensure it stays visible until next pass
+                setTimeout(() => setCurrentDetections([]), 4000);
               }
-            } catch (error: any) {
-              if (error.message === "QUOTA_EXCEEDED") {
-                setIsQuotaExceeded(true);
-                setIsDetecting(false); // Stop auto-detection to save remaining quota if any
-              } else {
-                setHasNetworkError(true);
-              }
+            } else {
+              // No detections is fine, just continue
+              setHasNetworkError(false);
+            }
+          } catch (error: any) {
+            if (error.message === "QUOTA_EXCEEDED") {
+              setIsQuotaExceeded(true);
+              setIsDetecting(false);
+            } else {
+              setHasNetworkError(true);
             }
           }
         }
-      }, 60000); // Increased to 60 seconds to handle extremely restrictive 20-request-per-day limits
+      }
+    };
+
+    if (isDetecting && !isInitializing && !isCoolingDown) {
+      // Run immediately
+      runDetection();
+      // Then set interval
+      interval = window.setInterval(runDetection, 5000);
+      detectionIntervalRef.current = interval;
     } else {
       if (detectionIntervalRef.current) {
         clearInterval(detectionIntervalRef.current);
       }
-      setCurrentDetection(null);
+      setCurrentDetections([]);
     }
 
     return () => {
-      if (detectionIntervalRef.current) {
-        clearInterval(detectionIntervalRef.current);
+      if (interval) {
+        clearInterval(interval);
       }
     };
-  }, [isDetecting, isInitializing]);
+  }, [isDetecting, isInitializing, isCoolingDown, settings.confidenceThreshold]);
 
+  // Effect to attach stream when video element becomes available
   useEffect(() => {
-    let mounted = true;
-
-    async function startCamera() {
-      if (isDetecting) {
-        setIsInitializing(true);
-        try {
-          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error("Camera API not available in this browser/context");
-          }
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
-          });
-          
-          if (!mounted) {
-            stream.getTracks().forEach(track => track.stop());
-            return;
-          }
-
-          streamRef.current = stream;
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-          setHasCameraError(false);
-          setIsInitializing(false);
-        } catch (err) {
-          console.error("Error accessing camera:", err);
-          if (mounted) {
-            setHasCameraError(true);
-            setIsDetecting(false);
-            setIsInitializing(false);
-          }
-        }
-      } else {
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
-          streamRef.current = null;
-        }
-        if (videoRef.current) {
-          videoRef.current.srcObject = null;
-        }
-        if (mounted) {
-          setIsInitializing(false);
-        }
-      }
+    if (isDetecting && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current;
     }
-
-    startCamera();
-
-    return () => {
-      mounted = false;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-    };
   }, [isDetecting]);
 
-  const handleUploadClick = () => {
+  const startCamera = async () => {
+    setIsInitializing(true);
+    setHasCameraError(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        } 
+      });
+      streamRef.current = stream;
+      setUploadedImage(null);
+      setIsDetecting(true);
+    } catch (err) {
+      console.error("Camera access error:", err);
+      setHasCameraError(true);
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setIsDetecting(false);
+    setCurrentDetections([]);
+  };
+
+  const handleFileUpload = () => {
     fileInputRef.current?.click();
   };
 
@@ -180,8 +220,8 @@ export default function LiveView() {
       reader.onload = async (e) => {
         const base64 = e.target?.result as string;
         setUploadedImage(base64);
-        setIsDetecting(false); // Stop camera if it was on
-        setCurrentDetection(null);
+        setIsDetecting(false);
+        setCurrentDetections([]);
       };
       reader.readAsDataURL(file);
     }
@@ -204,35 +244,25 @@ export default function LiveView() {
 
     if (!imageToDetect) return;
 
-    setCurrentDetection(null);
+    setCurrentDetections([]);
     setIsProcessing(true);
     try {
-      const result = await detectPlate(imageToDetect);
+      const results = await detectPlate(imageToDetect);
       setQuotaUsed(prev => prev + 1);
-      if (result) {
+      if (results && results.length > 0) {
         setIsQuotaExceeded(false);
         setHasNetworkError(false);
-        setCurrentDetection(result);
-        if (result.confidence * 100 >= settings.confidenceThreshold) {
-          await saveDetectionToBackend(result);
+        
+        const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
+        setCurrentDetections(validDetections);
+        for (const det of validDetections) {
+          await saveDetectionToBackend(det);
         }
-        // For manual detection, we might want to keep the overlay visible longer or until cleared
       }
     } catch (error: any) {
       console.error("Manual detection failed:", error);
       if (error?.message?.includes("429") || error?.message?.includes("Quota")) {
         setIsQuotaExceeded(true);
-        // Try to parse retry delay
-        try {
-          const errorData = typeof error.message === 'string' ? JSON.parse(error.message) : error;
-          const retryDelay = errorData?.error?.details?.find((d: any) => d['@type']?.includes('RetryInfo'))?.retryDelay;
-          if (retryDelay) {
-            const seconds = parseInt(retryDelay.replace('s', ''));
-            if (!isNaN(seconds)) {
-              setQuotaRetryTime(seconds);
-            }
-          }
-        } catch (e) {}
       } else if (error?.message?.includes("fetch") || error?.message?.includes("Network")) {
         setHasNetworkError(true);
       }
@@ -241,376 +271,515 @@ export default function LiveView() {
     }
   };
 
-  const detections = [
-    { plate: 'KNT-4042', time: '14:02:45.021', confidence: 98, status: 'Clearance', color: 'emerald' },
-    { plate: 'X-772-PL', time: '14:03:12.894', confidence: 82, status: 'Watchlist', color: 'error' },
-    { plate: 'AM-1929-B', time: '14:03:55.102', confidence: 99, status: 'Unknown', color: 'slate' },
-  ];
+  const handleCapture = () => {
+    if (videoRef.current && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const context = canvas.getContext('2d');
+      if (context) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const captured = canvas.toDataURL('image/jpeg', 0.9);
+        setUploadedImage(captured);
+        stopCamera();
+      }
+    }
+  };
 
-  const handleExportCSV = () => {
-    const headers = ['Plate Recognition', 'Make', 'Model', 'Timestamp', 'Confidence', 'Security Status'];
-    const csvContent = [
-      headers.join(','),
-      ...liveDetections.map(det => `${det.plate},${det.make || ''},${det.model || ''},${det.timestamp},${det.confidence * 100}%,${det.status}`)
-    ].join('\n');
+  const handleCaptureAndDetect = async () => {
+    if (videoRef.current && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const context = canvas.getContext('2d');
+      if (context) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const captured = canvas.toDataURL('image/jpeg', 0.9);
+        setUploadedImage(captured);
+        stopCamera();
+        
+        // Now detect on the captured image
+        setCurrentDetections([]);
+        setIsProcessing(true);
+        try {
+          const results = await detectPlate(captured);
+          setQuotaUsed(prev => prev + 1);
+          if (results && results.length > 0) {
+            const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
+            setCurrentDetections(validDetections);
+            for (const det of validDetections) {
+              await saveDetectionToBackend(det);
+            }
+          }
+        } catch (error) {
+          console.error("Capture & Detect failed:", error);
+        } finally {
+          setIsProcessing(false);
+        }
+      }
+    }
+  };
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
+  const handleDownloadFrame = () => {
+    let imageToDownload = uploadedImage;
+
+    if (!imageToDownload && isDetecting && videoRef.current && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const context = canvas.getContext('2d');
+      if (context) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        imageToDownload = canvas.toDataURL('image/jpeg', 0.9);
+      }
+    }
+
+    if (!imageToDownload) return;
+
     const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `lpr_detections_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
+    link.href = imageToDownload;
+    link.download = `lpr_frame_${new Date().getTime()}.jpg`;
     link.click();
-    document.body.removeChild(link);
   };
 
   return (
     <div className="space-y-6">
-      {/* Hero Grid: Video Feed & Action Panel */}
+      {/* Analytics Overview */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { 
+            label: "Today's Detections", 
+            value: stats.todayDetections.toLocaleString(), 
+            change: (stats.detectionsChange || 0) === 0 ? "Live" : `${(stats.detectionsChange || 0) > 0 ? '+' : ''}${(stats.detectionsChange || 0).toFixed(1)}%`, 
+            icon: Zap, 
+            color: "text-primary" 
+          },
+          { 
+            label: "Active Cameras", 
+            value: stats.activeCameras.toString(), 
+            change: "Stable", 
+            icon: Activity, 
+            color: "text-success" 
+          },
+          { 
+            label: "Watchlist Hits", 
+            value: stats.watchlistHits.toString(), 
+            change: stats.watchlistHits > 0 ? "Critical" : "Clear", 
+            icon: Shield, 
+            color: stats.watchlistHits > 0 ? "text-error" : "text-success" 
+          },
+          { 
+            label: "Average Confidence", 
+            value: `${((stats.avgConfidence || 0) * 100).toFixed(1)}%`, 
+            change: (stats.confidenceChange || 0) === 0 ? "Real-time" : `${(stats.confidenceChange || 0) > 0 ? '+' : ''}${(stats.confidenceChange || 0).toFixed(1)}%`, 
+            icon: TrendingUp, 
+            color: "text-tertiary" 
+          },
+        ].map((stat, i) => (
+          <motion.div 
+            key={i}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.1 }}
+            className="bg-surface border border-surface-highest p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow"
+          >
+            <div className="flex justify-between items-start mb-2">
+              <div className={`p-2 rounded-lg bg-surface-low ${stat.color}`}>
+                <stat.icon size={18} />
+              </div>
+              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                stat.change.includes('+') ? 'bg-success/10 text-success' : 
+                stat.change === 'Critical' ? 'bg-error/10 text-error' : 'bg-surface-highest text-on-surface-variant'
+              }`}>
+                {stat.change}
+              </span>
+            </div>
+            <p className="text-2xl font-bold text-on-surface">{stat.value}</p>
+            <p className="text-xs text-on-surface-variant font-medium">{stat.label}</p>
+          </motion.div>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Live Feed Canvas */}
-        <section className="lg:col-span-2 relative group rounded-xl overflow-hidden bg-surface-container-lowest shadow-2xl">
-          <div className="aspect-video w-full bg-slate-950 relative flex items-center justify-center">
-            {uploadedImage ? (
-              <div className="relative w-full h-full">
-                <img 
-                  src={uploadedImage} 
-                  alt="Uploaded for detection" 
-                  className="w-full h-full object-contain"
-                />
+        {/* Main Monitor Section */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-lg group relative">
+            {/* Camera Info Overlay */}
+            <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+              <div className="bg-surface/80 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${isDetecting ? 'bg-success animate-pulse' : 'bg-on-surface-variant'}`}></div>
+                <span className="text-[10px] font-bold text-on-surface uppercase tracking-widest">
+                  CAM-01 • MAIN ENTRANCE
+                </span>
+              </div>
+              <div className="bg-surface/80 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-lg">
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
+                  {new Date().toLocaleTimeString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Camera Actions Overlay */}
+            <div className="absolute top-4 right-4 z-20 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              {isDetecting && (
                 <button 
-                  onClick={() => setUploadedImage(null)}
-                  className="absolute top-4 right-4 bg-error/80 hover:bg-error text-white p-2 rounded-full shadow-lg transition-all"
+                  onClick={stopCamera}
+                  className="p-2 bg-error/20 backdrop-blur-md border border-error/20 rounded-lg text-error hover:bg-error/30 transition-colors"
+                  title="Turn Off Camera"
                 >
                   <CameraOff size={16} />
                 </button>
-              </div>
-            ) : isDetecting ? (
-              <video 
-                ref={videoRef}
-                autoPlay 
-                playsInline 
-                muted
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center text-slate-500 gap-4">
-                <CameraOff size={48} className="opacity-20" />
-                <p className="text-xs font-bold uppercase tracking-widest opacity-40">System Standby</p>
-                <img 
-                  alt="Live ANPR Traffic Feed Placeholder" 
-                  className="absolute inset-0 w-full h-full object-cover opacity-20 pointer-events-none" 
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuD8kG5viSSPd6AWrhatzOs0BelPinlz7CIeAGB1XhTJeFEepj7_JV4m_wPvepZaUcCv53tOL0tnSDBxzRloQojbvrjlQcB3sSF_xPv2h5wyXSo_ltqddfvBh8-1JUNRuKONjMf179ZPU495MEDB0Niw4l6vMi6BgljrM52GaROdGql7DyPquLTwkujB7XsS5qs2EhBLpJsLxbVnYP_fhN-J4q-waIEKTp7SaswgHX5Q9S4qxdCAR6-GqCUgDnylSCmVRwWEceBasAE"
-                  referrerPolicy="no-referrer"
-                />
-              </div>
-            )}
+              )}
+              <button className="p-2 bg-surface/80 backdrop-blur-md border border-white/10 rounded-lg text-on-surface-variant hover:text-on-surface transition-colors">
+                <Maximize2 size={16} />
+              </button>
+              <button className="p-2 bg-surface/80 backdrop-blur-md border border-white/10 rounded-lg text-on-surface-variant hover:text-on-surface transition-colors">
+                <SettingsIcon size={16} />
+              </button>
+            </div>
 
-            {hasCameraError && (
-              <div className="absolute inset-0 bg-error/20 backdrop-blur-sm flex items-center justify-center p-6 text-center">
-                <div className="glass-panel p-6 rounded-2xl border border-error/30 max-w-xs">
-                  <CameraOff className="text-error mx-auto mb-4" size={32} />
-                  <h4 className="text-white font-bold mb-2">Camera Access Denied</h4>
-                  <p className="text-[10px] text-on-surface-variant leading-relaxed">Please ensure camera permissions are granted in your browser settings to enable real-time detection.</p>
-                </div>
-              </div>
-            )}
-
-            {hasNetworkError && (
-              <div className="absolute inset-0 bg-error/20 backdrop-blur-sm flex items-center justify-center p-6 text-center">
-                <div className="glass-panel p-6 rounded-2xl border border-error/30 max-w-xs">
-                  <Activity className="text-error mx-auto mb-4" size={32} />
-                  <h4 className="text-white font-bold mb-2">Connectivity Issue</h4>
-                  <p className="text-[10px] text-on-surface-variant leading-relaxed">
-                    The system is having trouble reaching the AI engine. 
-                    Please check your internet connection or ensure no ad-blockers are restricting 'generativelanguage.googleapis.com'.
+            {/* Video Stage */}
+            <div className="aspect-video bg-surface-low relative flex items-center justify-center overflow-hidden">
+              {!isDetecting && !uploadedImage ? (
+                <div className="text-center p-8">
+                  <div className="w-16 h-16 bg-surface-high rounded-2xl flex items-center justify-center mx-auto mb-4 text-on-surface-variant">
+                    <CameraOff size={32} />
+                  </div>
+                  <h3 className="text-lg font-bold text-on-surface mb-1">Camera Offline</h3>
+                  <p className="text-sm text-on-surface-variant max-w-xs mx-auto">
+                    Waiting for camera input. Connect a live feed or upload an image to begin detection.
                   </p>
                   <button 
-                    onClick={() => setHasNetworkError(false)}
-                    className="mt-4 px-4 py-2 bg-error text-white text-[10px] font-bold rounded-lg uppercase"
+                    onClick={startCamera}
+                    disabled={isInitializing}
+                    className="mt-6 px-6 py-2.5 bg-primary hover:bg-primary-container text-white rounded-xl font-semibold text-sm transition-all flex items-center gap-2 mx-auto"
                   >
-                    Retry Now
+                    {isInitializing ? <Activity size={18} className="animate-spin" /> : <PlayCircle size={18} />}
+                    Initialize Camera
                   </button>
                 </div>
-              </div>
-            )}
+              ) : (
+                <>
+                  {uploadedImage ? (
+                    <img src={uploadedImage} className="w-full h-full object-contain" alt="Uploaded" />
+                  ) : (
+                    <video 
+                      ref={videoRef} 
+                      autoPlay 
+                      playsInline 
+                      muted 
+                      className="w-full h-full object-cover"
+                    />
+                  )}
 
-            {isQuotaExceeded && (
-              <div className="absolute inset-0 bg-yellow-500/20 backdrop-blur-sm flex items-center justify-center p-6 text-center">
-                <div className="glass-panel p-6 rounded-2xl border border-yellow-500/30 max-w-xs">
-                  <Activity className="text-yellow-500 mx-auto mb-4" size={32} />
-                  <h4 className="text-white font-bold mb-2">Daily Quota Reached</h4>
-                  <p className="text-[10px] text-on-surface-variant leading-relaxed">
-                    The AI engine has reached its free tier limit (20 requests/day). 
-                    Auto-detection is paused. {quotaRetryTime ? `Please retry in ${quotaRetryTime}s.` : 'Detection will resume automatically once the quota resets.'}
-                  </p>
+                  {/* AI Detection Overlay */}
+                  <AnimatePresence>
+                    {currentDetections.map((det, idx) => det.bbox && (
+                      <motion.div 
+                        key={`${det.plate}-${idx}`}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        className="absolute inset-0 pointer-events-none z-10"
+                      >
+                        <div 
+                          className="absolute border-2 border-primary shadow-[0_0_20px_rgba(59,130,246,0.3)] rounded-sm"
+                          style={{
+                            left: `${(det.bbox.x / 1000) * 100}%`,
+                            top: `${(det.bbox.y / 1000) * 100}%`,
+                            width: `${(det.bbox.width / 1000) * 100}%`,
+                            height: `${(det.bbox.height / 1000) * 100}%`,
+                          }}
+                        >
+                          <div className="hud-bracket hud-bracket-tl"></div>
+                          <div className="hud-bracket hud-bracket-tr"></div>
+                          <div className="hud-bracket hud-bracket-bl"></div>
+                          <div className="hud-bracket hud-bracket-br"></div>
+                          
+                          <div className="absolute -top-12 left-0 bg-primary text-white text-[10px] px-3 py-1.5 font-bold rounded-lg shadow-xl flex flex-col min-w-[120px]">
+                            <div className="flex justify-between items-center mb-0.5">
+                              <span className="tracking-widest">{det.plate}</span>
+                              <span className="opacity-80">{((det.confidence || 0) * 100).toFixed(0)}%</span>
+                            </div>
+                            {det.make && (
+                              <span className="text-[8px] opacity-70 uppercase tracking-wider">{det.make} {det.model}</span>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </>
+              )}
+
+              {/* Status Bar */}
+              <div className="absolute bottom-4 left-4 right-4 z-20 flex justify-between items-center">
+                <div className="flex gap-2">
+                  {uploadedImage && (
+                    <button 
+                      onClick={() => {
+                        setUploadedImage(null);
+                        setCurrentDetections([]);
+                        startCamera();
+                      }}
+                      className="bg-primary/90 backdrop-blur-md text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-primary transition-all"
+                    >
+                      <Camera size={14} />
+                      BACK TO LIVE
+                    </button>
+                  )}
+                  {isQuotaExceeded && (
+                    <div className="bg-error/90 backdrop-blur-md text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg">
+                      <AlertCircle size={14} />
+                      QUOTA LIMIT REACHED
+                    </div>
+                  )}
+                  {hasNetworkError && (
+                    <div className="bg-warning/90 backdrop-blur-md text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg">
+                      <Activity size={14} />
+                      NETWORK UNSTABLE
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Control Panel */}
+            <div className="p-4 bg-surface border-t border-surface-highest flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                {isDetecting ? (
                   <button 
-                    onClick={() => {
-                      setIsQuotaExceeded(false);
-                      setQuotaRetryTime(null);
-                    }}
-                    className="mt-4 px-4 py-2 bg-yellow-500 text-surface text-[10px] font-bold rounded-lg uppercase"
+                    onClick={stopCamera}
+                    className="px-4 py-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
                   >
-                    Dismiss
+                    <StopCircle size={16} className="text-error" />
+                    Stop & Turn Off Camera
                   </button>
-                </div>
-              </div>
-            )}
-
-            {/* AI Overlay: Bounding Boxes */}
-            <AnimatePresence>
-              {(isDetecting || uploadedImage) && currentDetection && currentDetection.bbox && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="absolute inset-0 pointer-events-none"
+                ) : (
+                  <button 
+                    onClick={startCamera}
+                    className="px-4 py-2 bg-primary text-white hover:bg-primary-container rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-primary/10"
+                  >
+                    <PlayCircle size={16} />
+                    Start Monitoring
+                  </button>
+                )}
+                <button 
+                  onClick={handleFileUpload}
+                  className="px-4 py-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
                 >
-                  <div 
-                    className="absolute border-2 border-tertiary/50 shadow-[0_0_15px_rgba(76,214,255,0.4)]"
-                    style={{
-                      left: `${(currentDetection.bbox.x / 1000) * 100}%`,
-                      top: `${(currentDetection.bbox.y / 1000) * 100}%`,
-                      width: `${(currentDetection.bbox.width / 1000) * 100}%`,
-                      height: `${(currentDetection.bbox.height / 1000) * 100}%`,
-                    }}
+                  <CloudUpload size={16} className="text-primary" />
+                  Upload Frame
+                </button>
+                {isDetecting && (
+                  <button 
+                    onClick={handleCapture}
+                    className="px-4 py-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
                   >
-                    <div className="hud-bracket hud-bracket-tl"></div>
-                    <div className="hud-bracket hud-bracket-tr"></div>
-                    <div className="hud-bracket hud-bracket-bl"></div>
-                    <div className="hud-bracket hud-bracket-br"></div>
-                    <div className="absolute -top-10 left-0 bg-tertiary text-surface text-[10px] px-2 py-1 font-bold uppercase tracking-tighter whitespace-nowrap rounded shadow-lg">
-                      <div className="flex flex-col">
-                        <span>{currentDetection.plate} • {(currentDetection.confidence * 100).toFixed(1)}%</span>
-                        {currentDetection.make && (
-                          <span className="text-[8px] opacity-80">{currentDetection.make} {currentDetection.model}</span>
-                        )}
+                    <Camera size={16} className="text-tertiary" />
+                    Capture
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Confidence</p>
+                  <p className="text-xs font-black text-primary">{settings.confidenceThreshold}%</p>
+                </div>
+                <button 
+                  onClick={handleDownloadFrame}
+                  disabled={!isDetecting && !uploadedImage}
+                  className="p-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl transition-all disabled:opacity-30"
+                  title="Download Current Frame"
+                >
+                  <Download size={18} />
+                </button>
+                <button 
+                  onClick={isDetecting ? handleCaptureAndDetect : handleManualDetect}
+                  disabled={isProcessing || (!isDetecting && !uploadedImage)}
+                  className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${
+                    isProcessing 
+                      ? 'bg-surface-highest text-on-surface-variant' 
+                      : 'bg-primary text-white hover:bg-primary-container shadow-lg shadow-primary/20'
+                  }`}
+                >
+                  {isProcessing ? 'Processing...' : (isDetecting ? 'Capture & Detect' : 'Analyze Frame')}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* System Activity Feed */}
+          <div className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-sm">
+            <div className="p-4 border-b border-surface-highest flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Activity size={16} className="text-primary" />
+                <h3 className="text-xs font-bold text-on-surface uppercase tracking-widest">System Activity</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Auto-refresh: 60s</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></div>
+              </div>
+            </div>
+            <div className="max-h-[200px] overflow-y-auto divide-y divide-surface-highest custom-scrollbar">
+              {systemActivities.length > 0 ? (
+                systemActivities.map((activity) => (
+                  <div key={activity.id} className="p-3 flex items-start gap-4 hover:bg-surface-low transition-colors">
+                    <span className="text-[10px] font-mono text-on-surface-variant whitespace-nowrap pt-0.5">
+                      {new Date(activity.timestamp).toLocaleTimeString([], { hour12: false })}
+                    </span>
+                    <p className="text-xs text-on-surface font-medium leading-relaxed">
+                      {activity.message}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="p-8 text-center">
+                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest opacity-50">
+                    Waiting for system events...
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Sidebar: Recent Detections */}
+        <div className="space-y-6">
+          <div className="bg-surface border border-surface-highest rounded-2xl shadow-lg flex flex-col h-[calc(100vh-280px)] lg:h-[600px]">
+            <div className="p-4 border-b border-surface-highest flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">Live Detections</h3>
+              <Activity size={14} className="text-primary animate-pulse" />
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              {liveDetections.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-6 opacity-50">
+                  <Database size={32} className="mb-2" />
+                  <p className="text-xs font-medium">No recent activity</p>
+                </div>
+              ) : (
+                liveDetections.map((det, i) => (
+                  <motion.div 
+                    key={det.id || i}
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="p-3 bg-surface-low border border-surface-highest rounded-xl hover:border-primary/30 transition-all cursor-pointer group"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-sm font-black text-on-surface tracking-tight group-hover:text-primary transition-colors">
+                        {det.plate}
+                      </span>
+                      <span className="text-[10px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded">
+                        {Math.round(det.confidence * 100)}%
+                      </span>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                        <Clock size={10} />
+                        <span>{new Date(det.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                        <MapPin size={10} />
+                        <span>{det.location || 'Main Entrance'}</span>
                       </div>
                     </div>
-                  </div>
-                  <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-transparent via-blue-400 to-transparent opacity-20 animate-pulse"></div>
-                </motion.div>
+                    {det.make && (
+                      <div className="mt-2 pt-2 border-t border-surface-highest flex items-center justify-between">
+                        <span className="text-[9px] font-bold text-on-surface uppercase">{det.make} {det.model}</span>
+                        <ExternalLink size={10} className="text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
+                    )}
+                  </motion.div>
+                ))
               )}
-            </AnimatePresence>
+            </div>
             
-            {/* Hidden Canvas for Frame Capture */}
-            <canvas ref={canvasRef} className="hidden" />
-            {/* Video Controls Overlay */}
-            <div className="absolute bottom-4 left-4 flex flex-wrap gap-3">
+            <button className="p-4 text-[10px] font-bold text-primary uppercase tracking-widest border-t border-surface-highest hover:bg-surface-low transition-all">
+              View Full History
+            </button>
+          </div>
+
+          {/* Quick Actions / Tools */}
+          <div className="bg-surface border border-surface-highest rounded-2xl p-4 shadow-sm">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-4">Quick Tools</h3>
+            <div className="grid grid-cols-2 gap-2">
               <button 
                 onClick={() => {
-                  setIsDetecting(!isDetecting);
-                  if (!isDetecting) setUploadedImage(null);
+                  const headers = ['Plate', 'Timestamp', 'Confidence'];
+                  const csvContent = [
+                    headers.join(','),
+                    ...liveDetections.map(det => `${det.plate},${det.timestamp},${det.confidence}`)
+                  ].join('\n');
+                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.setAttribute('href', url);
+                  link.setAttribute('download', `live_detections_${new Date().toISOString()}.csv`);
+                  link.click();
                 }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-bold shadow-lg transition-all active:scale-95 ${
-                  isDetecting ? 'bg-error text-surface shadow-error/20' : 'bg-emerald-500 text-surface shadow-emerald-500/20'
-                }`}
+                className="p-3 bg-surface-low hover:bg-surface-high border border-surface-highest rounded-xl text-center transition-all group"
               >
-                {isDetecting ? (
-                  <>
-                    <StopCircle size={14} />
-                    Stop Detection
-                  </>
-                ) : (
-                  <>
-                    <PlayCircle size={14} />
-                    Start Detection
-                  </>
-                )}
+                <Database size={18} className="mx-auto mb-1 text-on-surface-variant group-hover:text-primary" />
+                <span className="text-[10px] font-bold text-on-surface">Export Log</span>
               </button>
-
-              {(isDetecting || uploadedImage) && (
-                <button 
-                  onClick={handleManualDetect}
-                  disabled={isProcessing}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-full text-xs font-bold shadow-lg transition-all active:scale-95 bg-primary text-white shadow-primary/20 disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  {isProcessing ? (
-                    <>
-                      <Activity size={14} className="animate-spin" />
-                      Detecting...
-                    </>
-                  ) : (
-                    <>
-                      <Activity size={14} />
-                      Detect Now
-                    </>
-                  )}
-                </button>
-              )}
-
-              <div className="glass-panel px-4 py-2 rounded-full flex items-center gap-2 border border-white/10">
-                {hasCameraError ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-error"></span>
-                    <span className="text-[10px] font-bold text-error uppercase tracking-widest">System Error</span>
-                  </>
-                ) : isInitializing ? (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
-                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Initializing</span>
-                  </>
-                ) : isDetecting ? (
-                  <>
-                    <span className={`w-2 h-2 rounded-full ${hasNetworkError ? 'bg-error' : isCoolingDown ? 'bg-yellow-500' : 'bg-emerald-500 animate-ping'}`}></span>
-                    <span className={`text-[10px] font-bold uppercase tracking-widest ${hasNetworkError ? 'text-error' : isCoolingDown ? 'text-yellow-500' : 'text-white'}`}>
-                      {hasNetworkError ? 'Network Error' : isCoolingDown ? 'Cooling Down' : 'Running'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="w-2 h-2 rounded-full bg-slate-500"></span>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Paused</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Manual Upload & Status Bento */}
-        <div className="space-y-6">
-          <div 
-            className={`glass-panel p-6 rounded-xl border flex flex-col items-center justify-center text-center group transition-all border-dashed border-2 ${
-              uploadedImage ? 'border-primary bg-primary/5' : 'border-white/5 hover:bg-white/10 cursor-pointer'
-            }`}
-            onClick={!uploadedImage ? handleUploadClick : undefined}
-          >
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept="image/*"
-              onChange={handleFileChange}
-            />
-            {uploadedImage ? (
-              <>
-                <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-3">
-                  <Activity size={24} className="text-primary" />
-                </div>
-                <h3 className="text-sm font-bold text-white mb-1">Image Loaded</h3>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setUploadedImage(null);
-                    setCurrentDetection(null);
-                  }}
-                  className="text-[10px] font-bold text-error hover:underline mt-2"
-                >
-                  Remove Image
-                </button>
-              </>
-            ) : (
-              <>
-                <CloudUpload size={32} className="text-blue-400 mb-3 group-hover:scale-110 transition-transform" />
-                <h3 className="text-sm font-bold text-white mb-1">Manual Plate Ingest</h3>
-                <p className="text-[11px] text-on-surface-variant px-4">Click to upload high-res frames for specialized forensic analysis</p>
-              </>
-            )}
-          </div>
-          
-          <div className="grid grid-cols-1 gap-4">
-            <div className="bg-surface-highest p-4 rounded-xl border border-white/5">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Daily Quota (Est.)</span>
-              <div className="flex items-baseline gap-2 mt-1">
-                <div className={`text-2xl font-bold font-headline ${quotaUsed >= 20 ? 'text-error' : 'text-primary'}`}>{quotaUsed}</div>
-                <div className="text-xs text-on-surface-variant">/ 20</div>
-              </div>
-            </div>
-            <div className="bg-surface-highest p-4 rounded-xl border border-white/5">
-              <span className="text-[10px] uppercase tracking-widest text-on-surface-variant font-bold">Avg Confidence</span>
-              <div className="text-2xl font-bold text-tertiary font-headline mt-1">94.2%</div>
+              <button className="p-3 bg-surface-low hover:bg-surface-high border border-surface-highest rounded-xl text-center transition-all group">
+                <Shield size={18} className="mx-auto mb-1 text-on-surface-variant group-hover:text-error" />
+                <span className="text-[10px] font-bold text-on-surface">Watchlist</span>
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Real-time Detection Log */}
-      <section className="glass-panel rounded-xl overflow-hidden border border-white/5 shadow-xl">
-        <div className="p-4 border-b border-white/5 flex justify-between items-center bg-white/5">
-          <h3 className="text-xs font-black uppercase tracking-widest text-white flex items-center gap-2">
-            <Database size={14} className="text-blue-400" />
-            Real-time Detection Log
-          </h3>
-          <button 
-            onClick={handleExportCSV}
-            className="text-[10px] font-bold text-blue-400 hover:underline"
-          >
-            Export CSV
-          </button>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-widest text-on-surface-variant bg-surface-high/50">
-                <th className="px-6 py-4 font-bold">Plate Recognition</th>
-                <th className="px-6 py-4 font-bold">Visual ID</th>
-                <th className="px-6 py-4 font-bold">Timestamp</th>
-                <th className="px-6 py-4 font-bold">Confidence</th>
-                <th className="px-6 py-4 font-bold">Security Status</th>
-                <th className="px-6 py-4 font-bold">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {liveDetections.length > 0 ? (
-                liveDetections.map((det, i) => (
-                  <tr key={det.id || i} className="hover:bg-white/5 transition-colors group">
-                    <td className="px-6 py-4">
-                      <div className="flex flex-col">
-                        <div className="bg-surface-bright px-3 py-1 rounded inline-block border border-white/10 shadow-inner w-fit">
-                          <span className="text-lg font-black text-white tracking-widest">{det.plate}</span>
-                        </div>
-                        {(det.make || det.model) && (
-                          <span className="text-[10px] text-on-surface-variant font-bold uppercase mt-1">
-                            {det.make} {det.model}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="w-10 h-6 bg-slate-800 rounded flex items-center justify-center text-[8px] text-slate-500 font-bold border border-white/5">
-                        IMG
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-xs font-medium text-on-surface-variant">
-                      {new Date(det.timestamp).toLocaleTimeString()}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500" style={{ width: `${det.confidence * 100}%` }}></div>
-                        </div>
-                        <span className="text-xs font-bold text-blue-400">{(det.confidence * 100).toFixed(0)}%</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-widest border ${
-                        det.status === 'Authorized' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                        det.status === 'Unauthorized' ? 'bg-error/10 text-error border-error/20' :
-                        'bg-slate-500/20 text-slate-400 border-white/5'
-                      }`}>
-                        {det.status || 'Detected'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <button className="text-on-surface-variant hover:text-white transition-colors">
-                        <ExternalLink size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="px-6 py-10 text-center text-on-surface-variant text-xs italic">
-                    Waiting for detections...
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      {/* Hidden Elements */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleFileChange} 
+        accept="image/*" 
+        className="hidden" 
+      />
+      <canvas ref={canvasRef} className="hidden" />
+
+      {/* Real-time Notifications Overlay */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none">
+        <AnimatePresence>
+          {notifications.map((notif) => (
+            <motion.div
+              key={notif.id}
+              initial={{ opacity: 0, x: 50, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 20, scale: 0.95 }}
+              className="pointer-events-auto bg-surface-high border border-surface-highest shadow-2xl rounded-xl p-4 flex items-center gap-4 min-w-[300px] max-w-md"
+            >
+              <div className={`p-2 rounded-lg ${
+                notif.type === 'success' ? 'bg-success/10 text-success' : 
+                notif.type === 'warning' ? 'bg-warning/10 text-warning' :
+                notif.type === 'error' ? 'bg-error/10 text-error' : 'bg-primary/10 text-primary'
+              }`}>
+                <Zap size={18} />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs font-bold text-on-surface leading-tight">{notif.message}</p>
+                <p className="text-[10px] text-on-surface-variant mt-1 font-medium">
+                  {new Date(notif.timestamp).toLocaleTimeString()}
+                </p>
+              </div>
+              <button 
+                onClick={() => setNotifications(prev => prev.filter(n => n.id !== notif.id))}
+                className="text-on-surface-variant hover:text-on-surface transition-colors"
+              >
+                <Maximize2 size={14} className="rotate-45" />
+              </button>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

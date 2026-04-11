@@ -9,7 +9,12 @@ import {
   Database, 
   Cpu,
   RefreshCw,
-  CheckCircle2
+  CheckCircle2,
+  Lock,
+  Eye,
+  Smartphone,
+  Globe,
+  AlertCircle
 } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 
@@ -18,7 +23,6 @@ export default function Settings() {
   const [localSettings, setLocalSettings] = useState(settings);
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Sync local state when global settings change (e.g. on reset)
   useEffect(() => {
     setLocalSettings(settings);
   }, [settings]);
@@ -38,45 +42,52 @@ export default function Settings() {
   const sections = [
     {
       id: 'detection',
-      title: 'Detection Engine',
+      title: 'Recognition Engine',
       icon: Cpu,
-      description: 'Configure the ANPR recognition parameters.',
+      description: 'Fine-tune the ANPR core parameters and sensitivity.',
       controls: [
         {
           label: 'Confidence Threshold',
-          description: 'Minimum confidence score required to record a detection.',
+          description: 'Minimum accuracy required for a valid detection.',
           type: 'range',
           min: 50,
           max: 100,
           value: localSettings.confidenceThreshold,
           onChange: (val: number) => setLocalSettings(prev => ({ ...prev, confidenceThreshold: val })),
           unit: '%'
+        },
+        {
+          label: 'Enhanced OCR Pass',
+          description: 'Enable multi-pass analysis for low-light frames.',
+          type: 'toggle',
+          value: true,
+          disabled: false
         }
       ]
     },
     {
       id: 'alerts',
-      title: 'Alerts & Notifications',
+      title: 'Notifications',
       icon: Bell,
-      description: 'Manage how the system notifies you of critical events.',
+      description: 'Configure how you receive critical system alerts.',
       controls: [
         {
           label: 'Watchlist Alerts',
-          description: 'Trigger notifications for blacklisted license plates.',
+          description: 'Instant notification for blacklisted plates.',
           type: 'toggle',
           value: localSettings.watchlistAlerts,
           onChange: (val: boolean) => setLocalSettings(prev => ({ ...prev, watchlistAlerts: val }))
         },
         {
-          label: 'Audible Alerts',
-          description: 'Play a sound when a high-priority detection occurs.',
+          label: 'Audible Feedback',
+          description: 'Play a sound on high-confidence detections.',
           type: 'toggle',
           value: localSettings.audibleAlerts,
           onChange: (val: boolean) => setLocalSettings(prev => ({ ...prev, audibleAlerts: val }))
         },
         {
-          label: 'System Updates',
-          description: 'Receive alerts about engine status and API connectivity.',
+          label: 'System Health',
+          description: 'Alerts for camera connectivity and API status.',
           type: 'toggle',
           value: localSettings.systemUpdates,
           onChange: (val: boolean) => setLocalSettings(prev => ({ ...prev, systemUpdates: val }))
@@ -84,87 +95,101 @@ export default function Settings() {
       ]
     },
     {
-      id: 'system',
-      title: 'System Configuration',
-      icon: Database,
-      description: 'Global system and storage settings.',
+      id: 'security',
+      title: 'Security & Access',
+      icon: Shield,
+      description: 'Manage data privacy and system permissions.',
       controls: [
         {
-          label: 'Auto-Archive',
-          description: 'Automatically archive detections older than 30 days.',
+          label: 'Data Encryption',
+          description: 'Encrypt stored plate numbers in the database.',
           type: 'toggle',
           value: true,
           disabled: true
         },
         {
-          label: 'Real-time Sync',
-          description: 'Synchronize detections with the central database instantly.',
+          label: 'Face Masking',
+          description: 'Automatically blur faces in detection frames.',
           type: 'toggle',
-          value: true,
-          disabled: true
+          value: false,
+          disabled: false
         }
       ]
     }
   ];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-12 relative">
+    <div className="max-w-4xl mx-auto space-y-8 pb-12">
       <AnimatePresence>
         {showSuccess && (
           <motion.div 
             initial={{ opacity: 0, y: -20, x: '-50%' }}
             animate={{ opacity: 1, y: 0, x: '-50%' }}
             exit={{ opacity: 0, y: -20, x: '-50%' }}
-            className="fixed top-24 left-1/2 z-50 bg-emerald-500 text-white px-6 py-3 rounded-2xl shadow-2xl shadow-emerald-500/20 flex items-center gap-3 border border-emerald-400/30 backdrop-blur-md"
+            className="fixed top-24 left-1/2 z-50 bg-success text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 border border-white/10"
           >
             <CheckCircle2 size={20} />
-            <span className="font-bold text-sm">Settings updated successfully</span>
+            <span className="font-bold text-sm">Configuration saved successfully</span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <header className="flex items-center gap-4 mb-8">
-        <div className="p-3 rounded-2xl bg-primary-container/20 text-primary">
-          <SettingsIcon size={32} />
-        </div>
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <h1 className="text-3xl font-black text-white font-headline">System Settings</h1>
-          <p className="text-on-surface-variant">Configure your ANPR environment and detection preferences.</p>
+          <p className="text-primary font-bold uppercase tracking-[0.2em] text-[10px] mb-1">System Control</p>
+          <h1 className="text-3xl font-black tracking-tight text-on-surface">Settings</h1>
+        </div>
+        <div className="flex gap-3">
+          <button 
+            onClick={handleReset}
+            className="bg-surface border border-surface-highest hover:bg-surface-high transition-colors text-on-surface px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-bold"
+          >
+            <RefreshCw size={14} />
+            Reset
+          </button>
+          <button 
+            onClick={handleApply}
+            className="bg-primary text-white px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-primary-container transition-all shadow-lg shadow-primary/20 flex items-center gap-2"
+          >
+            <Zap size={14} />
+            Save Changes
+          </button>
         </div>
       </header>
 
       <div className="grid grid-cols-1 gap-6">
-        {sections.map((section) => (
+        {sections.map((section, i) => (
           <motion.section 
             key={section.id}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="glass-panel rounded-3xl p-8 border border-white/5 shadow-xl"
+            transition={{ delay: i * 0.1 }}
+            className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-sm"
           >
-            <div className="flex items-start gap-6 mb-8">
-              <div className="p-3 rounded-xl bg-white/5 text-blue-400">
+            <div className="p-6 border-b border-surface-highest bg-surface-low/50 flex items-start gap-4">
+              <div className="p-3 rounded-xl bg-surface border border-surface-highest text-primary">
                 <section.icon size={24} />
               </div>
               <div>
-                <h2 className="text-xl font-bold text-white mb-1">{section.title}</h2>
-                <p className="text-sm text-on-surface-variant">{section.description}</p>
+                <h2 className="text-sm font-bold text-on-surface uppercase tracking-widest">{section.title}</h2>
+                <p className="text-xs text-on-surface-variant mt-1">{section.description}</p>
               </div>
             </div>
 
-            <div className="space-y-6">
+            <div className="divide-y divide-surface-highest">
               {section.controls.map((control, idx) => (
-                <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 rounded-2xl hover:bg-white/5 transition-colors border border-transparent hover:border-white/5">
-                  <div className="flex-1">
-                    <h3 className="text-sm font-bold text-white mb-1">{control.label}</h3>
-                    <p className="text-xs text-on-surface-variant max-w-md">{control.description}</p>
+                <div key={idx} className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:bg-surface-low/30 transition-colors">
+                  <div className="max-w-md">
+                    <h3 className="text-sm font-bold text-on-surface">{control.label}</h3>
+                    <p className="text-xs text-on-surface-variant mt-1">{control.description}</p>
                   </div>
                   
-                  <div className="flex items-center gap-4 min-w-[200px] justify-end">
+                  <div className="flex items-center gap-6 min-w-[240px] justify-end">
                     {control.type === 'range' ? (
-                      <div className="w-full space-y-2">
-                        <div className="flex justify-between text-[10px] font-black text-primary uppercase tracking-widest">
+                      <div className="w-full space-y-3">
+                        <div className="flex justify-between text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
                           <span>Sensitivity</span>
-                          <span>{control.value}{control.unit}</span>
+                          <span className="text-primary">{control.value}{control.unit}</span>
                         </div>
                         <input 
                           type="range"
@@ -172,16 +197,19 @@ export default function Settings() {
                           max={control.max}
                           value={control.value as number}
                           onChange={(e) => control.onChange?.(parseInt(e.target.value))}
-                          className="w-full h-1.5 bg-surface-highest rounded-lg appearance-none cursor-pointer accent-primary"
+                          className="w-full h-1.5 bg-surface-low rounded-full appearance-none cursor-pointer accent-primary"
                         />
                       </div>
                     ) : (
                       <button 
                         disabled={control.disabled}
                         onClick={() => control.onChange?.(!(control.value as boolean))}
-                        className={`w-12 h-6 rounded-full relative transition-all ${control.disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'} ${control.value ? 'bg-primary' : 'bg-surface-highest'}`}
+                        className={`w-12 h-6 rounded-full relative transition-all flex items-center ${control.disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'} ${control.value ? 'bg-primary' : 'bg-surface-highest'}`}
                       >
-                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${control.value ? 'left-7' : 'left-1'}`}></div>
+                        <motion.div 
+                          animate={{ x: control.value ? 26 : 4 }}
+                          className="w-4 h-4 bg-white rounded-full shadow-sm"
+                        />
                       </button>
                     )}
                   </div>
@@ -192,22 +220,26 @@ export default function Settings() {
         ))}
       </div>
 
-      <div className="flex justify-end gap-4 pt-4">
-        <button 
-          onClick={handleReset}
-          className="px-6 py-3 rounded-xl border border-white/10 text-white font-bold text-sm hover:bg-white/5 transition-all flex items-center gap-2"
-        >
-          <RefreshCw size={16} />
-          Reset to Defaults
-        </button>
-        <button 
-          onClick={handleApply}
-          className="px-6 py-3 rounded-xl bg-primary text-white font-bold text-sm hover:opacity-90 transition-all shadow-lg shadow-primary/20 flex items-center gap-2"
-        >
-          <Zap size={16} />
-          Apply Changes
-        </button>
-      </div>
+      {/* Danger Zone */}
+      <section className="bg-error/5 border border-error/20 rounded-2xl p-6">
+        <div className="flex items-start gap-4">
+          <div className="p-3 rounded-xl bg-error/10 text-error">
+            <AlertCircle size={24} />
+          </div>
+          <div className="flex-1">
+            <h2 className="text-sm font-bold text-error uppercase tracking-widest">Danger Zone</h2>
+            <p className="text-xs text-on-surface-variant mt-1">Irreversible actions that affect system data.</p>
+            <div className="mt-6 flex flex-wrap gap-4">
+              <button className="px-4 py-2 bg-error/10 hover:bg-error/20 text-error rounded-xl text-xs font-bold transition-all border border-error/20">
+                Purge Detection History
+              </button>
+              <button className="px-4 py-2 bg-error/10 hover:bg-error/20 text-error rounded-xl text-xs font-bold transition-all border border-error/20">
+                Reset System Credentials
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

@@ -6,7 +6,14 @@ import {
   Download, 
   MoreVertical, 
   ChevronLeft, 
-  ChevronRight 
+  ChevronRight,
+  Filter,
+  Clock,
+  MapPin,
+  CheckCircle2,
+  AlertCircle,
+  X,
+  Activity
 } from 'lucide-react';
 
 export default function History() {
@@ -102,38 +109,14 @@ export default function History() {
     document.body.removeChild(link);
   };
 
-  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const dateValue = e.target.value;
-    if (!dateValue) {
-      setSelectedDate(null);
-      return;
-    }
-    
-    // Convert YYYY-MM-DD to "MMM DD, YYYY" to match INITIAL_HISTORY format
-    const date = new Date(dateValue);
-    const formatted = date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-    
-    setSelectedDate(formatted);
-    setCurrentPage(1);
-  };
-
   const handleFilterDateClick = (ref: React.RefObject<HTMLInputElement>) => {
-    // showPicker() is often blocked in cross-origin iframes (SecurityError).
-    // We use .click() on a visually hidden (but not display:none) input as the most compatible workaround.
     if (ref.current) {
       try {
         ref.current.click();
       } catch (err) {
-        // Fallback to showPicker if click fails, but catch any security errors silently
         try {
           ref.current.showPicker?.();
-        } catch (e) {
-          console.warn("Native date picker could not be triggered in this environment.");
-        }
+        } catch (e) {}
       }
     }
   };
@@ -148,307 +131,246 @@ export default function History() {
   };
 
   return (
-    <div className="space-y-10">
-      {/* Visually Hidden Date Inputs */}
-      <label htmlFor="history-date-input" className="sr-only">Filter history by date</label>
-      <input 
-        id="history-date-input"
-        type="date" 
-        ref={dateInputRef} 
-        className="absolute opacity-0 pointer-events-none -z-50 w-0 h-0" 
-        onChange={(e) => {
-          const val = e.target.value;
-          setSelectedDate(val ? formatDateForDisplay(val) : null);
-          setCurrentPage(1);
-        }}
-        aria-label="Select date to filter history"
-      />
+    <div className="space-y-6">
+      {/* Hidden Date Inputs */}
+      <input type="date" ref={dateInputRef} className="hidden" onChange={(e) => setSelectedDate(e.target.value || null)} />
+      <input type="date" ref={startDateInputRef} className="hidden" onChange={(e) => setStartDate(e.target.value || null)} />
+      <input type="date" ref={endDateInputRef} className="hidden" onChange={(e) => setEndDate(e.target.value || null)} />
 
-      <input 
-        type="date" 
-        ref={startDateInputRef} 
-        className="absolute opacity-0 pointer-events-none -z-50 w-0 h-0" 
-        onChange={(e) => {
-          setStartDate(e.target.value || null);
-          setCurrentPage(1);
-        }}
-      />
-
-      <input 
-        type="date" 
-        ref={endDateInputRef} 
-        className="absolute opacity-0 pointer-events-none -z-50 w-0 h-0" 
-        onChange={(e) => {
-          setEndDate(e.target.value || null);
-          setCurrentPage(1);
-        }}
-      />
-      
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+      {/* Header */}
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <p className="font-headline uppercase tracking-widest text-[10px] text-tertiary mb-1">Audit Log</p>
-          <h1 className="text-4xl font-extrabold font-headline text-white tracking-tight">LPR History</h1>
-          <p className="text-on-surface-variant mt-2 max-w-xl">Search through historical license plate data, filtered by location, status, and custom timeframes.</p>
+          <p className="text-primary font-bold uppercase tracking-[0.2em] text-[10px] mb-1">Audit Log</p>
+          <h1 className="text-3xl font-black tracking-tight text-on-surface">Detection History</h1>
         </div>
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center bg-surface-highest/50 p-1 rounded-xl self-end">
-            <button 
-              onClick={() => {
-                setFilterMode('single');
-                setStartDate(null);
-                setEndDate(null);
-              }}
-              className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${filterMode === 'single' ? 'bg-primary-container text-white shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:text-white'}`}
-            >
-              Single Day
-            </button>
-            <button 
-              onClick={() => {
-                setFilterMode('range');
-                setSelectedDate(null);
-              }}
-              className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${filterMode === 'range' ? 'bg-primary-container text-white shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:text-white'}`}
-            >
-              Date Range
-            </button>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {filterMode === 'single' ? (
-              <button 
-                onClick={() => handleFilterDateClick(dateInputRef)}
-                aria-haspopup="grid"
-                aria-controls="history-date-input"
-                aria-label={selectedDate ? `Change date filter, currently ${selectedDate}` : 'Open date picker to filter history'}
-                className={`px-5 py-2.5 rounded-xl border font-semibold text-sm flex items-center gap-2 transition-all focus:ring-2 focus:ring-primary focus:outline-none ${
-                  selectedDate ? 'bg-primary-container text-white border-primary/50' : 'bg-surface-highest border-white/10 text-on-surface hover:bg-surface-bright'
-                }`}
-              >
-                <Calendar size={14} aria-hidden="true" />
-                <span>{selectedDate ? `Date: ${selectedDate}` : 'Filter by Date'}</span>
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => handleFilterDateClick(startDateInputRef)}
-                  className={`px-4 py-2.5 rounded-xl border font-semibold text-xs flex items-center gap-2 transition-all ${
-                    startDate ? 'bg-primary-container text-white border-primary/50' : 'bg-surface-highest border-white/10 text-on-surface hover:bg-surface-bright'
-                  }`}
-                >
-                  <Calendar size={12} />
-                  <span>{startDate ? formatDateForDisplay(startDate) : 'Start Date'}</span>
-                </button>
-                <span className="text-on-surface-variant text-xs font-bold">to</span>
-                <button 
-                  onClick={() => handleFilterDateClick(endDateInputRef)}
-                  className={`px-4 py-2.5 rounded-xl border font-semibold text-xs flex items-center gap-2 transition-all ${
-                    endDate ? 'bg-primary-container text-white border-primary/50' : 'bg-surface-highest border-white/10 text-on-surface hover:bg-surface-bright'
-                  }`}
-                >
-                  <Calendar size={12} />
-                  <span>{endDate ? formatDateForDisplay(endDate) : 'End Date'}</span>
-                </button>
-              </div>
-            )}
-            <button 
-              onClick={handleExportCSV}
-              className="px-5 py-2.5 rounded-xl bg-surface-highest border border-white/10 text-on-surface font-semibold text-sm flex items-center gap-2 hover:bg-surface-bright transition-all"
-            >
-              <Download size={14} />
-              Export CSV
-            </button>
-          </div>
+        <div className="flex gap-3">
+          <button 
+            onClick={handleExportCSV}
+            className="bg-surface border border-surface-highest hover:bg-surface-high transition-colors text-on-surface px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-bold"
+          >
+            <Download size={14} />
+            Export CSV
+          </button>
         </div>
-      </div>
+      </header>
 
-      {/* Search & Filters Panel */}
-      <section className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-3 bg-surface-high rounded-2xl glass-panel p-1 flex items-center gap-2 shadow-lg">
-          <div className="flex-1 flex items-center px-4 gap-3">
-            <Search size={18} className="text-on-surface-variant" />
+      {/* Filters Bar */}
+      <section className="bg-surface border border-surface-highest rounded-2xl p-4 shadow-sm space-y-4">
+        <div className="flex flex-col lg:flex-row gap-4">
+          <div className="flex-1 relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
             <input 
-              className="w-full bg-transparent border-none focus:ring-0 text-on-surface placeholder:text-on-surface-variant text-sm py-3" 
-              placeholder="Search by Plate Number, Brand, or Location..." 
               type="text"
+              placeholder="Search by plate, make, or location..."
+              className="w-full bg-surface-low border border-surface-highest rounded-xl pl-12 pr-4 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             />
           </div>
-          <button 
-            onClick={handleSearch}
-            className="px-6 py-2.5 rounded-xl bg-primary-container text-white font-bold text-sm m-1 hover:opacity-90 transition-all"
-          >
-            Search
-          </button>
-        </div>
-        <div className="bg-surface-high rounded-2xl glass-panel p-4 flex items-center justify-between border border-white/5">
-          <div className="flex flex-col">
-            <span className="font-headline uppercase tracking-widest text-[9px] text-on-surface-variant">Active Filters</span>
-            <span className="text-sm font-bold text-on-surface">
-              {[activeSearch, selectedDate, startDate, endDate].filter(Boolean).length} Selected
-            </span>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="bg-surface-low border border-surface-highest p-1 rounded-xl flex">
+              <button 
+                onClick={() => setFilterMode('single')}
+                className={`px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${filterMode === 'single' ? 'bg-surface-high text-on-surface shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Day
+              </button>
+              <button 
+                onClick={() => setFilterMode('range')}
+                className={`px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${filterMode === 'range' ? 'bg-surface-high text-on-surface shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}
+              >
+                Range
+              </button>
+            </div>
+
+            {filterMode === 'single' ? (
+              <button 
+                onClick={() => handleFilterDateClick(dateInputRef)}
+                className={`px-4 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
+                  selectedDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-surface-low border-surface-highest text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <Calendar size={14} />
+                {selectedDate ? formatDateForDisplay(selectedDate) : 'Select Date'}
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => handleFilterDateClick(startDateInputRef)}
+                  className={`px-4 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
+                    startDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-surface-low border-surface-highest text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  {startDate ? formatDateForDisplay(startDate) : 'Start'}
+                </button>
+                <span className="text-on-surface-variant text-[10px] font-bold uppercase">to</span>
+                <button 
+                  onClick={() => handleFilterDateClick(endDateInputRef)}
+                  className={`px-4 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
+                    endDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-surface-low border-surface-highest text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  {endDate ? formatDateForDisplay(endDate) : 'End'}
+                </button>
+              </div>
+            )}
+
+            {(activeSearch || selectedDate || startDate || endDate) && (
+              <button 
+                onClick={handleClearAll}
+                className="p-2 text-error hover:bg-error/10 rounded-xl transition-colors"
+                title="Clear all filters"
+              >
+                <X size={18} />
+              </button>
+            )}
+            
+            <button 
+              onClick={handleSearch}
+              className="bg-primary text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-primary-container transition-all shadow-lg shadow-primary/20"
+            >
+              Apply Filters
+            </button>
           </div>
-          <button 
-            onClick={handleClearAll}
-            className="text-xs font-bold text-primary hover:underline"
-          >
-            Clear All
-          </button>
         </div>
       </section>
 
       {/* Table Section */}
-      <div className="bg-surface-low rounded-2xl border border-white/5 overflow-hidden shadow-2xl">
+      <div className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
-            <thead className="bg-surface-highest/50">
-              <tr>
-                <th className="px-6 py-4 font-headline uppercase tracking-widest text-[10px] text-on-surface-variant">Vehicle & Plate</th>
-                <th className="px-6 py-4 font-headline uppercase tracking-widest text-[10px] text-on-surface-variant">Location</th>
-                <th className="px-6 py-4 font-headline uppercase tracking-widest text-[10px] text-on-surface-variant text-center">Confidence</th>
-                <th className="px-6 py-4 font-headline uppercase tracking-widest text-[10px] text-on-surface-variant">Date/Time</th>
-                <th className="px-6 py-4 font-headline uppercase tracking-widest text-[10px] text-on-surface-variant">Status</th>
-                <th className="px-6 py-4 font-headline uppercase tracking-widest text-[10px] text-on-surface-variant text-right">Actions</th>
+            <thead>
+              <tr className="bg-surface-low border-b border-surface-highest">
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Vehicle & Plate</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Location</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Confidence</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Timestamp</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Status</th>
+                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
+            <tbody className="divide-y divide-surface-highest">
               <AnimatePresence mode="wait">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-20 text-center text-on-surface-variant font-medium">
-                      Loading history records...
+                    <td colSpan={6} className="px-6 py-20 text-center">
+                      <Activity className="mx-auto mb-2 text-primary animate-spin" size={24} />
+                      <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Synchronizing records...</p>
                     </td>
                   </tr>
                 ) : paginatedData.length > 0 ? (
                   paginatedData.map((row, i) => (
                     <motion.tr 
-                      key={row.id}
+                      key={row.id || i}
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -10 }}
-                      transition={{ delay: i * 0.05 }}
-                      className="hover:bg-white/5 transition-colors group"
+                      transition={{ delay: i * 0.03 }}
+                      className="hover:bg-surface-low transition-colors group"
                     >
-                      <td className="px-6 py-5">
+                      <td className="px-6 py-4">
                         <div className="flex items-center gap-4">
-                          <div className="w-20 h-10 bg-surface-bright rounded border border-white/10 overflow-hidden flex items-center justify-center p-1">
-                            <div className="w-full h-full bg-slate-800 flex items-center justify-center text-[8px] text-slate-500 font-bold">
-                              IMG
-                            </div>
+                          <div className="bg-surface-high px-3 py-1.5 rounded-lg border border-surface-highest font-black text-on-surface tracking-wider text-sm">
+                            {row.plate}
                           </div>
                           <div>
-                            <span className="text-base font-bold text-white tracking-wider">{row.plate}</span>
-                            <p className="text-[10px] text-on-surface-variant uppercase font-semibold">
-                              {row.make ? `${row.make} ${row.model}` : (row.model || 'Unknown Vehicle')}
-                            </p>
+                            <p className="text-xs font-bold text-on-surface uppercase">{row.make || 'Unknown'} {row.model || ''}</p>
+                            <p className="text-[10px] text-on-surface-variant font-medium">Record ID: {row.id?.toString().padStart(5, '0') || 'N/A'}</p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-5">
-                        <span className="text-sm text-on-surface">{row.location || 'Main Entrance'}</span>
-                      </td>
-                      <td className="px-6 py-5 text-center">
-                        <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded border ${
-                          (row.confidence * 100) > 90 ? 'bg-tertiary/10 border-tertiary/20 text-tertiary' : 'bg-yellow-500/10 border-yellow-500/20 text-yellow-500'
-                        }`}>
-                          <span className="text-xs font-bold">{(row.confidence * 100).toFixed(1)}%</span>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2 text-xs font-medium text-on-surface">
+                          <MapPin size={14} className="text-on-surface-variant" />
+                          {row.location || 'Main Entrance'}
                         </div>
                       </td>
-                      <td className="px-6 py-5">
-                        <div className="text-sm text-on-surface">{new Date(row.timestamp).toLocaleDateString()}</div>
-                        <div className="text-xs text-on-surface-variant">{new Date(row.timestamp).toLocaleTimeString()}</div>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 bg-surface-low rounded-full overflow-hidden max-w-[60px]">
+                            <div 
+                              className={`h-full ${row.confidence > 0.9 ? 'bg-success' : 'bg-warning'}`} 
+                              style={{ width: `${row.confidence * 100}%` }}
+                            ></div>
+                          </div>
+                          <span className="text-xs font-bold text-on-surface">{((row.confidence || 0) * 100).toFixed(0)}%</span>
+                        </div>
                       </td>
-                      <td className="px-6 py-5">
-                        <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          row.status === 'Authorized' ? 'bg-green-500/10 text-green-400' : 'bg-error/10 text-error'
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2 text-xs text-on-surface">
+                          <Clock size={14} className="text-on-surface-variant" />
+                          <span>{new Date(row.timestamp).toLocaleDateString()}</span>
+                          <span className="text-on-surface-variant">•</span>
+                          <span className="text-on-surface-variant">{new Date(row.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
+                          row.status === 'Authorized' || row.status === 'Clearance' 
+                            ? 'bg-success/10 text-success' 
+                            : 'bg-error/10 text-error'
                         }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${row.status === 'Authorized' ? 'bg-green-500' : 'bg-error'}`}></span>
+                          {row.status === 'Authorized' || row.status === 'Clearance' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
                           {row.status || 'Detected'}
                         </span>
                       </td>
-                      <td className="px-6 py-5 text-right">
-                        <button className="text-on-surface-variant hover:text-white transition-colors">
+                      <td className="px-6 py-4 text-right">
+                        <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded-lg transition-all">
                           <MoreVertical size={18} />
                         </button>
                       </td>
                     </motion.tr>
                   ))
                 ) : (
-                  <motion.tr 
-                    key="empty"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                  >
-                    <td colSpan={6} className="px-6 py-20 text-center text-on-surface-variant font-medium">
-                      No detection records found matching your criteria.
+                  <tr>
+                    <td colSpan={6} className="px-6 py-20 text-center">
+                      <Search className="mx-auto mb-2 text-on-surface-variant opacity-20" size={32} />
+                      <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">No records found</p>
                     </td>
-                  </motion.tr>
+                  </tr>
                 )}
               </AnimatePresence>
             </tbody>
           </table>
         </div>
-        {/* Pagination Footer */}
-        <div className="px-6 py-4 bg-surface-highest/30 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-xs text-on-surface-variant">
-            Showing <span className="text-white font-bold">
-              {filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} - {Math.min(currentPage * itemsPerPage, filteredData.length)}
-            </span> of <span className="text-white font-bold">{filteredData.length}</span> results
+
+        {/* Pagination */}
+        <div className="p-4 bg-surface-low border-t border-surface-highest flex items-center justify-between">
+          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
+            Showing {paginatedData.length} of {filteredData.length} entries
           </p>
           <div className="flex items-center gap-1">
             <button 
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               disabled={currentPage === 1}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5 transition-all disabled:opacity-30"
+              className="p-2 text-on-surface-variant hover:text-on-surface disabled:opacity-30 transition-colors"
             >
-              <ChevronLeft size={14} />
+              <ChevronLeft size={18} />
             </button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-              <button 
-                key={page}
-                onClick={() => setCurrentPage(page)}
-                className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold transition-all ${
-                  currentPage === page ? 'bg-primary-container text-white' : 'text-on-surface hover:bg-white/5'
-                }`}
-              >
-                {page}
-              </button>
-            ))}
+            <div className="flex items-center gap-1 px-2">
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                const pageNum = i + 1;
+                return (
+                  <button 
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${currentPage === pageNum ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-high'}`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
             <button 
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages || totalPages === 0}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-white/5 transition-all disabled:opacity-30"
+              className="p-2 text-on-surface-variant hover:text-on-surface disabled:opacity-30 transition-colors"
             >
-              <ChevronRight size={14} />
+              <ChevronRight size={18} />
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Summary Section: Dynamic Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {[
-          { label: 'Total Search Hits', value: filteredData.length.toLocaleString(), trend: '+12% vs last wk', trendColor: 'text-green-400' },
-          { label: 'Alert Rate', value: '4.2%', trend: '+0.5% drift', trendColor: 'text-error' },
-          { label: 'Avg. Confidence', value: '97.8%', progress: 80 },
-          { label: 'Peak Hour', value: '08:42', trend: 'Morning Rush', trendColor: 'text-on-surface-variant' },
-        ].map((stat, i) => (
-          <div key={i} className="p-5 rounded-2xl bg-surface-low border border-white/5 glass-panel">
-            <span className="font-headline uppercase tracking-widest text-[9px] text-on-surface-variant block mb-1">{stat.label}</span>
-            <div className="flex items-end gap-3">
-              <h3 className="text-2xl font-bold text-white font-headline">{stat.value}</h3>
-              {stat.trend && <span className={`text-[10px] font-bold mb-1 ${stat.trendColor}`}>{stat.trend}</span>}
-              {stat.progress && (
-                <div className="w-16 h-1 bg-surface-bright rounded-full overflow-hidden mb-2">
-                  <div className="h-full bg-tertiary" style={{ width: `${stat.progress}%` }}></div>
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
       </div>
     </div>
   );
