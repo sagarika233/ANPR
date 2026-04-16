@@ -17,12 +17,7 @@ import {
   AlertCircle,
   TrendingUp,
   Shield,
-  Zap,
-  User,
-  Hash,
-  Droplet,
-  Calendar,
-  FileText
+  Zap
 } from 'lucide-react';
 import { detectPlate, saveDetectionToBackend, DetectionResult } from '../services/anprService';
 import { useSettings } from '../context/SettingsContext';
@@ -698,33 +693,9 @@ export default function LiveView() {
                       </div>
                     </div>
                     {det.make && (
-                      <div className="mt-2 pt-2 border-t border-surface-highest flex flex-col gap-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] font-bold text-on-surface uppercase">{det.vehicle_type ? `${det.vehicle_type}: ` : ''}{det.make} {det.model}</span>
-                          <ExternalLink size={10} className="text-on-surface-variant group-hover:text-primary transition-colors" />
-                        </div>
-                        {det.owner && (
-                          <div className="mt-1 bg-surface-high/50 p-2 rounded-lg space-y-1">
-                            <div className="flex items-center gap-1.5 text-[9px]">
-                              <User size={10} className="text-primary" />
-                              <span className="font-bold text-on-surface">Owner: {det.owner}</span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-1 text-[8px] text-on-surface-variant font-medium">
-                              <div className="flex items-center gap-1">
-                                <Calendar size={8} /> Reg: {det.registration_date}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Droplet size={8} /> Fuel: {det.fuel_type}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <FileText size={8} /> Ins: {det.insurance_expiry}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Hash size={8} /> Eng: {det.engine_no?.slice(-6)}
-                              </div>
-                            </div>
-                          </div>
-                        )}
+                      <div className="mt-2 pt-2 border-t border-surface-highest flex items-center justify-between">
+                        <span className="text-[9px] font-bold text-on-surface uppercase">{det.vehicle_type ? `${det.vehicle_type}: ` : ''}{det.make} {det.model}</span>
+                        <ExternalLink size={10} className="text-on-surface-variant group-hover:text-primary transition-colors" />
                       </div>
                     )}
                   </motion.div>

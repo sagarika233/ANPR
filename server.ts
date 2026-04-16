@@ -26,24 +26,26 @@ db.serialize(() => {
       confidence REAL,
       make TEXT,
       model TEXT,
+      vehicle_type TEXT,
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
       location TEXT,
       status TEXT
     )
   `);
 
-  // Migration: Add make and model columns if they don't exist
+  // Migration: Add new columns if they don't exist
   db.all("PRAGMA table_info(history)", (err, columns: any[]) => {
     if (err) return;
-    const hasMake = columns.some(c => c.name === 'make');
-    const hasModel = columns.some(c => c.name === 'model');
+    const existing = columns.map(c => c.name);
+    const newColumns = [
+      'make', 'model', 'vehicle_type'
+    ];
     
-    if (!hasMake) {
-      db.run("ALTER TABLE history ADD COLUMN make TEXT");
-    }
-    if (!hasModel) {
-      db.run("ALTER TABLE history ADD COLUMN model TEXT");
-    }
+    newColumns.forEach(col => {
+      if (!existing.includes(col)) {
+        db.run(`ALTER TABLE history ADD COLUMN ${col} TEXT`);
+      }
+    });
   });
 });
 
@@ -131,15 +133,24 @@ setInterval(() => {
 }, 45000); // Every 45 seconds
 
 app.post("/api/detections", (req, res) => {
-  const { plate, confidence, make, model, location, status } = req.body;
+  const { 
+    plate, confidence, make, model, vehicle_type, location, status 
+  } = req.body;
+
   db.run(
-    "INSERT INTO history (plate, confidence, make, model, location, status) VALUES (?, ?, ?, ?, ?, ?)",
-    [plate, confidence, make, model, location || "Main Entrance", status || "Detected"],
+    `INSERT INTO history (
+      plate, confidence, make, model, vehicle_type, location, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      plate, confidence, make, model, vehicle_type, location || "Main Entrance", status || "Detected"
+    ],
     function(err) {
       if (err) return res.status(500).json({ error: err.message });
       
-      // Broadcast to all connected clients
-      const detection = { id: this.lastID, plate, confidence, make, model, timestamp: new Date(), location, status };
+      const detection = { 
+        id: this.lastID, plate, confidence, make, model, vehicle_type,
+        timestamp: new Date(), location, status 
+      };
       wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify({ type: 'NEW_DETECTION', data: detection }));

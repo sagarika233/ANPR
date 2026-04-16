@@ -1,6 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { sharpenImage, enhanceContrast, resizeImage, binarizeImage } from "../utils/imageUtils";
-import { lookupRegistryDetails } from "./registryService";
 
 export interface DetectionResult {
   plate: string;
@@ -8,12 +7,6 @@ export interface DetectionResult {
   make?: string;
   model?: string;
   vehicle_type?: string;
-  owner?: string;
-  registration_date?: string;
-  fuel_type?: string;
-  engine_no?: string;
-  chassis_no?: string;
-  insurance_expiry?: string;
   bbox?: { x: number; y: number; width: number; height: number };
   is_blurry?: boolean;
   is_enhanced?: boolean;
@@ -163,14 +156,6 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
         det.is_enhanced = true;
       }
     });
-
-    // Step 4: Enrich with Registry Details (Owner, Insurance, etc.)
-    for (const det of detections) {
-      if (det.plate) {
-        const registryInfo = await lookupRegistryDetails(det.plate);
-        Object.assign(det, registryInfo);
-      }
-    }
 
     return detections;
   } catch (error: any) {
