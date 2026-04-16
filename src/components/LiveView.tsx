@@ -17,7 +17,12 @@ import {
   AlertCircle,
   TrendingUp,
   Shield,
-  Zap
+  Zap,
+  User,
+  Hash,
+  Droplet,
+  Calendar,
+  FileText
 } from 'lucide-react';
 import { detectPlate, saveDetectionToBackend, DetectionResult } from '../services/anprService';
 import { useSettings } from '../context/SettingsContext';
@@ -501,11 +506,14 @@ export default function LiveView() {
                           
                           <div className="absolute -top-12 left-0 bg-primary text-white text-[10px] px-3 py-1.5 font-bold rounded-lg shadow-xl flex flex-col min-w-[120px]">
                             <div className="flex justify-between items-center mb-0.5">
-                              <span className="tracking-widest">{det.plate}</span>
+                              <span className="tracking-widest flex items-center gap-1">
+                                {det.plate}
+                                {det.is_enhanced && <Zap size={8} className="text-yellow-400 fill-yellow-400" />}
+                              </span>
                               <span className="opacity-80">{((det.confidence || 0) * 100).toFixed(0)}%</span>
                             </div>
                             {det.make && (
-                              <span className="text-[8px] opacity-70 uppercase tracking-wider">{det.make} {det.model}</span>
+                              <span className="text-[8px] opacity-70 uppercase tracking-wider">{det.vehicle_type ? `${det.vehicle_type}: ` : ''}{det.make} {det.model}</span>
                             )}
                           </div>
                         </div>
@@ -671,8 +679,9 @@ export default function LiveView() {
                     className="p-3 bg-surface-low border border-surface-highest rounded-xl hover:border-primary/30 transition-all cursor-pointer group"
                   >
                     <div className="flex justify-between items-start mb-2">
-                      <span className="text-sm font-black text-on-surface tracking-tight group-hover:text-primary transition-colors">
+                      <span className="text-sm font-black text-on-surface tracking-tight group-hover:text-primary transition-colors flex items-center gap-1">
                         {det.plate}
+                        {det.is_enhanced && <Zap size={10} className="text-yellow-500 fill-yellow-500" />}
                       </span>
                       <span className="text-[10px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded">
                         {Math.round(det.confidence * 100)}%
@@ -689,9 +698,33 @@ export default function LiveView() {
                       </div>
                     </div>
                     {det.make && (
-                      <div className="mt-2 pt-2 border-t border-surface-highest flex items-center justify-between">
-                        <span className="text-[9px] font-bold text-on-surface uppercase">{det.make} {det.model}</span>
-                        <ExternalLink size={10} className="text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="mt-2 pt-2 border-t border-surface-highest flex flex-col gap-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-bold text-on-surface uppercase">{det.vehicle_type ? `${det.vehicle_type}: ` : ''}{det.make} {det.model}</span>
+                          <ExternalLink size={10} className="text-on-surface-variant group-hover:text-primary transition-colors" />
+                        </div>
+                        {det.owner && (
+                          <div className="mt-1 bg-surface-high/50 p-2 rounded-lg space-y-1">
+                            <div className="flex items-center gap-1.5 text-[9px]">
+                              <User size={10} className="text-primary" />
+                              <span className="font-bold text-on-surface">Owner: {det.owner}</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1 text-[8px] text-on-surface-variant font-medium">
+                              <div className="flex items-center gap-1">
+                                <Calendar size={8} /> Reg: {det.registration_date}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Droplet size={8} /> Fuel: {det.fuel_type}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <FileText size={8} /> Ins: {det.insurance_expiry}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Hash size={8} /> Eng: {det.engine_no?.slice(-6)}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </motion.div>

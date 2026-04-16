@@ -1,13 +1,22 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { sharpenImage, enhanceContrast, resizeImage, binarizeImage } from "../utils/imageUtils";
+import { lookupRegistryDetails } from "./registryService";
 
 export interface DetectionResult {
   plate: string;
   confidence: number;
   make?: string;
   model?: string;
+  vehicle_type?: string;
+  owner?: string;
+  registration_date?: string;
+  fuel_type?: string;
+  engine_no?: string;
+  chassis_no?: string;
+  insurance_expiry?: string;
   bbox?: { x: number; y: number; width: number; height: number };
   is_blurry?: boolean;
+  is_enhanced?: boolean;
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -29,9 +38,14 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
       return null;
     }
 
-    // Resize original image to manage payload size (400 is sufficient for ANPR)
-    const resizedOriginal = await resizeImage(base64Image, 400);
-    console.log(`ANPR Payload size: ${Math.round(resizedOriginal.length / 1024)} KB`);
+    // Resize original image to manage payload size
+    const resizedOriginal = await resizeImage(base64Image, 600);
+    
+    // Create an enhanced version for better OCR on blurred images
+    const sharpened = await sharpenImage(resizedOriginal);
+    const contrastEnhanced = await enhanceContrast(sharpened);
+    
+    console.log(`ANPR Payload size (Original): ${Math.round(resizedOriginal.length / 1024)} KB`);
 
     const modelToUse = models[retryCount % models.length];
 
@@ -46,15 +60,28 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
             },
           },
           {
-            text: `You are an expert ANPR system. Analyze the provided frame to detect ALL visible license plates.
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: contrastEnhanced.split(',')[1] || contrastEnhanced,
+            },
+          },
+          {
+            text: `You are an advanced Multi-Vehicle ANPR and classification system. 
+            Identify EVERY vehicle and EVERY license plate in the image, scanning from background to foreground.
             
-            Perform a multi-pass analysis for each plate:
-            - Pass 1: Detect the license plate number.
-            - Pass 2: Identify the vehicle's make (e.g., Toyota, Maruti Suzuki, Honda) and model (e.g., Camry, Swift, City).
-            - Pass 3: Cross-reference visual cues to resolve ambiguities in blurred or pixelated characters.
+            VEHICLE SCOPE:
+            - Categories: Cars, SUVs, Hatchbacks, Sedans, Trucks (Light/Heavy), Buses, Motorcycles, Scooters, Three-Wheelers (Auto Rickshaws), Vans.
+            - Identification: For each vehicle, provide its type, brand (make), and specific model name.
             
-            Return a list of detections. For each, include the plate number, confidence score (0-1), bounding box coordinates, and the vehicle's make and model.
-            If it's an Indian plate, ensure it follows the standard format (e.g., MH12AB1234 or DL1CA1234).
+            PLATE RECOGNITION (Handling Blur/Distance):
+            - Reconstruct blurred characters using logical font-shape analysis.
+            - Format for Indian Plates: [StateCode][DistrictCode][Series][Number].
+            - Even if barely visible, provide your most likely read with a confidence score.
+            
+            MULTIPLE DETECTIONS:
+            - If there are 5 vehicles, return 5 detection objects.
+            - Ensure bounding boxes accurately enclose the license plate area.
+            
             Return ONLY a valid JSON object with a 'detections' array.`,
           },
         ],
@@ -73,6 +100,7 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
                   confidence: { type: Type.NUMBER },
                   make: { type: Type.STRING },
                   model: { type: Type.STRING },
+                  vehicle_type: { type: Type.STRING },
                   bbox: {
                     type: Type.OBJECT,
                     properties: {
@@ -85,7 +113,7 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
                   },
                   is_blurry: { type: Type.BOOLEAN },
                 },
-                required: ["plate", "confidence"],
+                required: ["plate", "confidence", "vehicle_type"],
               }
             }
           },
@@ -100,12 +128,49 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
     // Regex validation for Indian plates (Refined)
     const indianPlatePattern = /^[A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4}$/;
     
+    // Common misidentifications in OCR
+    const ocrCorrections: Record<string, string> = {
+      '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '8': 'B'
+    };
+    const reverseOcrCorrections: Record<string, string> = {
+      'O': '0', 'I': '1', 'Z': '2', 'S': '5', 'B': '8', 'G': '6', 'Q': '0'
+    };
+
     detections.forEach(det => {
-      const cleanedPlate = det.plate.replace(/[^A-Z0-9]/g, '').toUpperCase();
-      if (indianPlatePattern.test(cleanedPlate)) {
+      let plate = det.plate.replace(/[^A-Z0-9]/g, '').toUpperCase();
+      
+      // Attempt heuristic reconstruction if it's close to Indian format but failing
+      // State code (first 2 chars) must be letters
+      if (plate.length >= 2) {
+        let state = plate.substring(0, 2);
+        state = state.split('').map(char => isNaN(Number(char)) ? char : ocrCorrections[char] || char).join('');
+        plate = state + plate.substring(2);
+      }
+
+      // District code (chars 3-4) must be digits
+      if (plate.length >= 4) {
+        let district = plate.substring(2, 4);
+        const originalDistrict = district;
+        district = district.split('').map(char => isNaN(Number(char)) ? reverseOcrCorrections[char] || char : char).join('');
+        if (district !== originalDistrict) det.is_enhanced = true;
+        plate = plate.substring(0, 2) + district + plate.substring(4);
+      }
+      
+      det.plate = plate;
+      
+      if (indianPlatePattern.test(plate)) {
         det.confidence = Math.min(det.confidence + 0.15, 1.0);
+        det.is_enhanced = true;
       }
     });
+
+    // Step 4: Enrich with Registry Details (Owner, Insurance, etc.)
+    for (const det of detections) {
+      if (det.plate) {
+        const registryInfo = await lookupRegistryDetails(det.plate);
+        Object.assign(det, registryInfo);
+      }
+    }
 
     return detections;
   } catch (error: any) {
