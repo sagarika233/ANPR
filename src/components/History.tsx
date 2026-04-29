@@ -1,376 +1,243 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, 
-  Calendar, 
-  Download, 
-  MoreVertical, 
-  ChevronLeft, 
-  ChevronRight,
-  Filter,
-  Clock,
-  MapPin,
-  CheckCircle2,
-  AlertCircle,
+  Clock, 
+  MapPin, 
+  AlertCircle, 
   X,
-  Activity
+  FolderOpen,
+  CheckCircle2,
+  Image as ImageIcon
 } from 'lucide-react';
 
-export default function History() {
-  const [historyData, setHistoryData] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [activeSearch, setActiveSearch] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [filterMode, setFilterMode] = useState<'single' | 'range'>('single');
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState<string | null>(null);
-  const [endDate, setEndDate] = useState<string | null>(null);
-  const itemsPerPage = 10;
+interface HistoryProps {
+  initialSearch?: string;
+}
 
-  const dateInputRef = useRef<HTMLInputElement>(null);
-  const startDateInputRef = useRef<HTMLInputElement>(null);
-  const endDateInputRef = useRef<HTMLInputElement>(null);
+export default function History({ initialSearch = '' }: HistoryProps) {
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const [isSearching, setIsSearching] = useState(false);
+  const [noDataMessage, setNoDataMessage] = useState('');
+
+  const fetchSearchResult = async (query: string) => {
+    setIsSearching(true);
+    setNoDataMessage('');
+    try {
+      const url = query.trim() 
+        ? `/api/search?plate=${encodeURIComponent(query)}`
+        : `/api/search`;
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.message && (!data.data || data.data.length === 0)) {
+        setNoDataMessage(data.message);
+        setHistoryData([]);
+      } else {
+        setHistoryData(Array.isArray(data) ? data : (data.data || []));
+      }
+    } catch (error) {
+      console.error("Error searching records:", error);
+      setNoDataMessage('Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        const response = await fetch('/api/history');
-        const data = await response.json();
-        setHistoryData(data);
-      } catch (error) {
-        console.error("Error fetching history:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchHistory();
+    fetchSearchResult(searchQuery);
   }, []);
 
-  const filteredData = useMemo(() => {
-    return historyData.filter(item => {
-      const matchesSearch = 
-        item.plate.toLowerCase().includes(activeSearch.toLowerCase()) ||
-        (item.location && item.location.toLowerCase().includes(activeSearch.toLowerCase()));
-      
-      let matchesDate = true;
-      const itemDateObj = new Date(item.timestamp);
-      
-      if (filterMode === 'single' && selectedDate) {
-        const filterDate = new Date(selectedDate);
-        matchesDate = 
-          itemDateObj.getFullYear() === filterDate.getFullYear() &&
-          itemDateObj.getMonth() === filterDate.getMonth() &&
-          itemDateObj.getDate() === filterDate.getDate();
-      } else if (filterMode === 'range' && (startDate || endDate)) {
-        const itemTime = itemDateObj.getTime();
-        const start = startDate ? new Date(startDate).getTime() : -Infinity;
-        const end = endDate ? new Date(endDate).setHours(23, 59, 59, 999) : Infinity;
-        
-        matchesDate = itemTime >= start && itemTime <= end;
-      }
-      
-      return matchesSearch && matchesDate;
-    });
-  }, [historyData, activeSearch, filterMode, selectedDate, startDate, endDate]);
-
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
-  const paginatedData = filteredData.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  useEffect(() => {
+    if (initialSearch) {
+      setSearchQuery(initialSearch);
+      fetchSearchResult(initialSearch);
+    }
+  }, [initialSearch]);
 
   const handleSearch = () => {
-    setActiveSearch(searchQuery);
-    setCurrentPage(1);
+    fetchSearchResult(searchQuery);
   };
 
   const handleClearAll = () => {
     setSearchQuery('');
-    setActiveSearch('');
-    setSelectedDate(null);
-    setStartDate(null);
-    setEndDate(null);
-    setCurrentPage(1);
-  };
-
-  const handleExportCSV = () => {
-    const headers = ['Plate', 'Make', 'Model', 'Location', 'Confidence', 'Date', 'Time', 'Status'];
-    const csvContent = [
-      headers.join(','),
-      ...filteredData.map(row => `${row.plate},${row.make || ''},${row.model || ''},${row.location},${row.confidence}%,${row.date},${row.time},${row.status}`)
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `lpr_history_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleFilterDateClick = (ref: React.RefObject<HTMLInputElement>) => {
-    if (ref.current) {
-      try {
-        ref.current.click();
-      } catch (err) {
-        try {
-          ref.current.showPicker?.();
-        } catch (e) {}
-      }
-    }
-  };
-
-  const formatDateForDisplay = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
+    setHistoryData([]);
+    setNoDataMessage('');
   };
 
   return (
-    <div className="space-y-6">
-      {/* Hidden Date Inputs */}
-      <input type="date" ref={dateInputRef} className="hidden" onChange={(e) => setSelectedDate(e.target.value || null)} />
-      <input type="date" ref={startDateInputRef} className="hidden" onChange={(e) => setStartDate(e.target.value || null)} />
-      <input type="date" ref={endDateInputRef} className="hidden" onChange={(e) => setEndDate(e.target.value || null)} />
-
+    <div className="space-y-8 pb-24 md:pb-12 px-1">
       {/* Header */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <p className="text-primary font-bold uppercase tracking-[0.2em] text-[10px] mb-1">Audit Log</p>
-          <h1 className="text-3xl font-black tracking-tight text-on-surface">Detection History</h1>
-        </div>
-        <div className="flex gap-3">
-          <button 
-            onClick={handleExportCSV}
-            className="bg-surface border border-surface-highest hover:bg-surface-high transition-colors text-on-surface px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-bold"
-          >
-            <Download size={14} />
-            Export CSV
-          </button>
+          <p className="text-primary font-black uppercase tracking-[0.2em] text-[10px] mb-2">Logs & Records</p>
+          <h1 className="text-4xl font-black tracking-tighter text-on-surface">Search Records</h1>
         </div>
       </header>
 
-      {/* Filters Bar */}
-      <section className="bg-surface border border-surface-highest rounded-2xl p-4 shadow-sm space-y-4">
-        <div className="flex flex-col lg:flex-row gap-4">
-          <div className="flex-1 relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant" size={18} />
+      {/* Search Bar */}
+      <section className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-4 sm:p-6 shadow-sm">
+        <div className="flex flex-row gap-3 sm:gap-6 items-center">
+          <div className="flex-1 relative group min-w-0">
+            <button 
+              onClick={handleSearch}
+              className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 text-outline hover:text-primary transition-all z-10 p-1"
+            >
+              <Search size={18} className="sm:w-5 sm:h-5" />
+            </button>
             <input 
               type="text"
-              placeholder="Search by plate, make, or location..."
-              className="w-full bg-surface-low border border-surface-highest rounded-xl pl-12 pr-4 py-2.5 text-sm text-on-surface placeholder:text-on-surface-variant focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+              placeholder="Search plate..."
+              className="w-full bg-surface-container-low border border-outline-variant/20 rounded-xl pl-10 sm:pl-13 pr-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-on-surface placeholder:text-outline/60 focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all shadow-inner truncate"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             />
           </div>
           
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="bg-surface-low border border-surface-highest p-1 rounded-xl flex">
-              <button 
-                onClick={() => setFilterMode('single')}
-                className={`px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${filterMode === 'single' ? 'bg-surface-high text-on-surface shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}
-              >
-                Day
-              </button>
-              <button 
-                onClick={() => setFilterMode('range')}
-                className={`px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all ${filterMode === 'range' ? 'bg-surface-high text-on-surface shadow-sm' : 'text-on-surface-variant hover:text-on-surface'}`}
-              >
-                Range
-              </button>
-            </div>
-
-            {filterMode === 'single' ? (
-              <button 
-                onClick={() => handleFilterDateClick(dateInputRef)}
-                className={`px-4 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
-                  selectedDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-surface-low border-surface-highest text-on-surface-variant hover:text-on-surface'
-                }`}
-              >
-                <Calendar size={14} />
-                {selectedDate ? formatDateForDisplay(selectedDate) : 'Select Date'}
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => handleFilterDateClick(startDateInputRef)}
-                  className={`px-4 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
-                    startDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-surface-low border-surface-highest text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  {startDate ? formatDateForDisplay(startDate) : 'Start'}
-                </button>
-                <span className="text-on-surface-variant text-[10px] font-bold uppercase">to</span>
-                <button 
-                  onClick={() => handleFilterDateClick(endDateInputRef)}
-                  className={`px-4 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 transition-all ${
-                    endDate ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-surface-low border-surface-highest text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  {endDate ? formatDateForDisplay(endDate) : 'End'}
-                </button>
-              </div>
-            )}
-
-            {(activeSearch || selectedDate || startDate || endDate) && (
+          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
+            {searchQuery && (
               <button 
                 onClick={handleClearAll}
-                className="p-2 text-error hover:bg-error/10 rounded-xl transition-colors"
-                title="Clear all filters"
+                className="p-2 sm:p-3 text-error hover:bg-error/5 rounded-xl transition-colors"
+                title="Clear search"
               >
-                <X size={18} />
+                <X size={18} className="sm:w-5 sm:h-5" />
               </button>
             )}
             
             <button 
               onClick={handleSearch}
-              className="bg-primary text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-primary-container transition-all shadow-lg shadow-primary/20"
+              className="bg-on-surface text-surface px-4 sm:px-8 py-2.5 sm:py-3.5 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-[0.1em] sm:tracking-[0.2em] hover:opacity-90 transition-all shadow-xl active:scale-95 whitespace-nowrap"
             >
-              Apply Filters
+              Search
             </button>
           </div>
         </div>
       </section>
 
-      {/* Table Section */}
-      <div className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-surface-low border-b border-surface-highest">
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Vehicle & Plate</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Location</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Confidence</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Timestamp</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Status</th>
-                <th className="px-6 py-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-highest">
-              <AnimatePresence mode="wait">
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-20 text-center">
-                      <Activity className="mx-auto mb-2 text-primary animate-spin" size={24} />
-                      <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">Synchronizing records...</p>
-                    </td>
-                  </tr>
-                ) : paginatedData.length > 0 ? (
-                  paginatedData.map((row, i) => (
-                    <motion.tr 
-                      key={row.id || i}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.03 }}
-                      className="hover:bg-surface-low transition-colors group"
-                    >
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-4">
-                          <div className="bg-surface-high px-3 py-1.5 rounded-lg border border-surface-highest font-black text-on-surface tracking-wider text-sm">
-                            {row.plate}
-                          </div>
-                          <div>
-                            <p className="text-xs font-bold text-on-surface uppercase">{row.make || 'Unknown'} {row.model || ''}</p>
-                            <p className="text-[10px] text-on-surface-variant font-medium">Record ID: {row.id?.toString().padStart(5, '0') || 'N/A'}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 text-xs font-medium text-on-surface">
-                          <MapPin size={14} className="text-on-surface-variant" />
-                          {row.location || 'Main Entrance'}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-surface-low rounded-full overflow-hidden max-w-[60px]">
-                            <div 
-                              className={`h-full ${row.confidence > 0.9 ? 'bg-success' : 'bg-warning'}`} 
-                              style={{ width: `${row.confidence * 100}%` }}
-                            ></div>
-                          </div>
-                          <span className="text-xs font-bold text-on-surface">{((row.confidence || 0) * 100).toFixed(0)}%</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2 text-xs text-on-surface">
-                          <Clock size={14} className="text-on-surface-variant" />
-                          <span>{new Date(row.timestamp).toLocaleDateString()}</span>
-                          <span className="text-on-surface-variant">•</span>
-                          <span className="text-on-surface-variant">{new Date(row.timestamp).toLocaleTimeString()}</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${
-                          row.status === 'Authorized' || row.status === 'Clearance' 
-                            ? 'bg-success/10 text-success' 
-                            : 'bg-error/10 text-error'
-                        }`}>
-                          {row.status === 'Authorized' || row.status === 'Clearance' ? <CheckCircle2 size={12} /> : <AlertCircle size={12} />}
-                          {row.status || 'Detected'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button className="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-high rounded-lg transition-all">
-                          <MoreVertical size={18} />
-                        </button>
-                      </td>
-                    </motion.tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="px-6 py-20 text-center">
-                      <Search className="mx-auto mb-2 text-on-surface-variant opacity-20" size={32} />
-                      <p className="text-xs font-bold text-on-surface-variant uppercase tracking-widest">No records found</p>
-                    </td>
-                  </tr>
-                )}
-              </AnimatePresence>
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        <div className="p-4 bg-surface-low border-t border-surface-highest flex items-center justify-between">
-          <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-            Showing {paginatedData.length} of {filteredData.length} entries
-          </p>
-          <div className="flex items-center gap-1">
-            <button 
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              className="p-2 text-on-surface-variant hover:text-on-surface disabled:opacity-30 transition-colors"
-            >
-              <ChevronLeft size={18} />
-            </button>
-            <div className="flex items-center gap-1 px-2">
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                const pageNum = i + 1;
-                return (
-                  <button 
-                    key={pageNum}
-                    onClick={() => setCurrentPage(pageNum)}
-                    className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${currentPage === pageNum ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-high'}`}
-                  >
-                    {pageNum}
-                  </button>
-                );
-              })}
+      {/* Result Section */}
+      <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl overflow-hidden shadow-md">
+        <AnimatePresence mode="wait">
+          {isSearching ? (
+            <div className="px-10 py-40 text-center">
+              <div className="flex flex-col items-center">
+                <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin mb-6"></div>
+                <p className="text-[10px] font-black text-outline uppercase tracking-[0.4em]">Querying Database...</p>
+              </div>
             </div>
-            <button 
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages || totalPages === 0}
-              className="p-2 text-on-surface-variant hover:text-on-surface disabled:opacity-30 transition-colors"
-            >
-              <ChevronRight size={18} />
-            </button>
-          </div>
-        </div>
+          ) : historyData.length > 0 ? (
+            <div className="p-8">
+              <p className="text-[10px] font-black text-primary uppercase tracking-[0.2em] mb-6">
+                {searchQuery ? `Search Results for "${searchQuery}"` : 'Most Recent Records'}
+              </p>
+              <div className="divide-y divide-outline-variant/10">
+                {historyData.map((row, i) => (
+                <motion.div 
+                  key={row.id || i}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="group flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6 py-5 px-4 sm:px-6 hover:bg-surface-container-low transition-all duration-300 first:rounded-t-2xl last:rounded-b-2xl border-b border-outline-variant/5 last:border-0"
+                >
+                  {/* Compact Preview */}
+                  <div className="w-full sm:w-28 lg:w-36 aspect-video bg-black rounded-lg border border-outline-variant/10 overflow-hidden shadow-sm shrink-0">
+                    {row.image_url ? (
+                      <img 
+                        src={row.image_url} 
+                        className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                        referrerPolicy="no-referrer"
+                        alt="Capture" 
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-surface-container-low text-outline-variant uppercase font-black text-[8px]">
+                        No Img
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Identification */}
+                  <div className="flex flex-row sm:flex-col lg:flex-row items-center gap-4 min-w-0 sm:w-48 lg:w-72">
+                    <div className="bg-on-surface text-surface px-4 py-1.5 rounded-lg font-headline font-black text-sm sm:text-base tracking-widest shadow-md shrink-0">
+                      {row.plate_number || row.plate}
+                    </div>
+                    <div className="truncate">
+                      <p className="text-xs sm:text-sm font-black text-on-surface tracking-tight uppercase truncate">
+                        {row.make || 'Unknown'} <span className="text-primary">{row.model || ''}</span>
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Metadata - Desktop Row */}
+                  <div className="flex-1 grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-8 w-full items-center">
+                    <div className="hidden lg:block">
+                      <p className="text-[8px] font-black text-outline uppercase tracking-widest opacity-60 mb-0.5">Type</p>
+                      <p className="text-[10px] sm:text-xs font-bold text-on-surface truncate tracking-tight uppercase">{row.vehicle_type || 'Vehicle'}</p>
+                    </div>
+                    
+                    <div>
+                      <p className="text-[8px] font-black text-outline uppercase tracking-widest opacity-60 mb-0.5">Confidence</p>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-8 h-1 bg-surface-container-high rounded-full overflow-hidden hidden sm:block">
+                          <div 
+                            className="h-full bg-primary" 
+                            style={{ width: `${(row.confidence || 0) * 100}%` }}
+                          ></div>
+                        </div>
+                        <p className="text-[10px] sm:text-xs font-black text-on-surface">{((row.confidence || 0) * 100).toFixed(0)}%</p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-[8px] font-black text-outline uppercase tracking-widest opacity-60 mb-0.5">Detected At</p>
+                      <div className="flex items-center gap-1.5 text-on-surface font-black text-[9px] sm:text-[10px] uppercase tracking-tighter">
+                        <Clock size={12} className="text-primary shrink-0" />
+                        <span className="truncate">{new Date(row.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    </div>
+
+                    <div className="text-right sm:text-left">
+                      <p className="text-[8px] font-black text-outline uppercase tracking-widest opacity-60 mb-0.5">Status</p>
+                      <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest border transition-all duration-300 ${
+                        row.status === 'Valid'
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600' 
+                          : row.status === 'Low Confidence'
+                            ? 'bg-amber-500/10 border-amber-500/20 text-amber-600'
+                            : 'bg-error/10 border-error/20 text-error'
+                      }`}>
+                        {row.status === 'Valid' && <CheckCircle2 size={10} className="shrink-0" />}
+                        {row.status === 'Low Confidence' && <AlertCircle size={10} className="shrink-0 text-amber-500" />}
+                        {row.status === 'Blurry Image' && <ImageIcon size={10} className="shrink-0" />}
+                        {row.status || 'LOGGED'}
+                      </span>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+              </div>
+            </div>
+          ) : noDataMessage ? (
+            <div className="px-10 py-40 text-center">
+              <div className="flex flex-col items-center">
+                <div className="w-20 h-20 bg-surface-container-high rounded-3xl flex items-center justify-center mb-6">
+                  <AlertCircle size={48} className="text-error" strokeWidth={1.5} />
+                </div>
+                <p className="text-xl font-black text-on-surface tracking-tighter uppercase mb-2">{noDataMessage}</p>
+                <p className="text-sm text-on-surface-variant font-medium opacity-60">Try searching for a different plate number or ensure the format is correct.</p>
+              </div>
+            </div>
+          ) : (
+            <div className="px-10 py-40 text-center">
+              <div className="flex flex-col items-center">
+                <div className="w-20 h-20 bg-surface-container-high rounded-3xl flex items-center justify-center mb-6">
+                  <FolderOpen size={48} className="text-outline-variant" strokeWidth={1.5} />
+                </div>
+                <p className="text-xl font-black text-on-surface tracking-tighter uppercase mb-2">No Records Available</p>
+                <p className="text-sm text-on-surface-variant font-medium opacity-60">Enter a plate number above to search the database.</p>
+              </div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

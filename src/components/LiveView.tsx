@@ -17,15 +17,54 @@ import {
   AlertCircle,
   TrendingUp,
   Shield,
-  Zap
+  Zap,
+  Grid,
+  Square,
+  Layers,
+  Save,
+  Trash2,
+  ZoomIn,
+  ZoomOut,
+  Car,
+  Video,
+  ShieldCheck,
+  CheckCircle2,
+  Focus,
+  Sliders,
+  ScanEye,
+  Loader2
 } from 'lucide-react';
 import { detectPlate, saveDetectionToBackend, DetectionResult } from '../services/anprService';
+import { lookupRegistryDetails } from '../services/registryService';
+import { noiseReduction, adaptiveThresholding, sharpenImage, enhanceContrast, binarizeImage } from '../utils/imageUtils';
 import { useSettings } from '../context/SettingsContext';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+interface ActiveCamera {
+  id: string;
+  name: string;
+  stream: MediaStream | null;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  isSelected: boolean;
+}
+
+interface QueueItem {
+  id: string;
+  name: string;
+  base64: string;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  results?: DetectionResult[];
+}
 
 export default function LiveView() {
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
+  const [activeCameras, setActiveCameras] = useState<ActiveCamera[]>([]);
+  const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
   const [isDetecting, setIsDetecting] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [activeFiltersTab, setActiveFiltersTab] = useState<'tools' | 'presets'>('tools');
   const [hasCameraError, setHasCameraError] = useState(false);
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
   const [quotaRetryTime, setQuotaRetryTime] = useState<number | null>(null);
@@ -36,8 +75,17 @@ export default function LiveView() {
   const [currentDetections, setCurrentDetections] = useState<DetectionResult[]>([]);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [systemActivities, setSystemActivities] = useState<any[]>([]);
-  const [notifications, setNotifications] = useState<any[]>([]);
+  
+  // Batch processing state
+  const [uploadQueue, setUploadQueue] = useState<QueueItem[]>([]);
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+  const [isQueueRunning, setIsQueueRunning] = useState(false);
+  const [currentQueueIndex, setCurrentQueueIndex] = useState(-1);
+
+  const [zoom, setZoom] = useState(1);
+  const [focus, setFocus] = useState(0);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [activeAlerts, setActiveAlerts] = useState<any[]>([]);
   const [stats, setStats] = useState({
     todayDetections: 0,
     activeCameras: 1,
@@ -46,17 +94,19 @@ export default function LiveView() {
     detectionsChange: 0,
     confidenceChange: 0
   });
+  const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const detectionIntervalRef = useRef<number | null>(null);
-  const downloadLinkRef = useRef<HTMLAnchorElement>(null);
 
   // WebSocket Connection
   useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date().toLocaleTimeString());
+    }, 1000);
+
     const fetchStats = async () => {
       try {
         const res = await fetch('/api/stats');
@@ -67,7 +117,46 @@ export default function LiveView() {
       }
     };
 
+    const fetchRecentDetections = async () => {
+      try {
+        const res = await fetch('/api/search');
+        const data = await res.json();
+        const detections = Array.isArray(data) ? data : (data.data || []);
+        
+        // Transform back to the format expected by liveDetections
+        const formatted = detections.map((d: any) => ({
+          ...d,
+          plate: d.plate_number,
+          id: d.id,
+          timestamp: d.timestamp,
+          image: d.image_url,
+          confidence: d.confidence
+        }));
+        
+        setLiveDetections(formatted.slice(0, 10));
+      } catch (err) {
+        console.error("Error fetching recent detections:", err);
+      }
+    };
+
     fetchStats();
+    fetchRecentDetections();
+    
+    // Enumerate devices
+    const getDevices = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        setAvailableDevices(videoDevices);
+        // Initially select the first one
+        if (videoDevices.length > 0 && selectedDeviceIds.length === 0) {
+          setSelectedDeviceIds([videoDevices[0].deviceId]);
+        }
+      } catch (err) {
+        console.error("Error enumerating devices:", err);
+      }
+    };
+    getDevices();
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
@@ -75,44 +164,132 @@ export default function LiveView() {
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === 'NEW_DETECTION') {
-        setLiveDetections(prev => [message.data, ...prev].slice(0, 10));
+        const newDet = message.data;
+        
+        setLiveDetections(prev => {
+          // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
+          const isDuplicate = prev.some(d => 
+            d.plate === newDet.plate && 
+            (new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime() < 2000)
+          );
+          
+          if (isDuplicate) return prev;
+          return [newDet, ...prev].slice(0, 10);
+        });
+        
         // Refresh stats when new detection arrives
         fetchStats();
-      } else if (message.type === 'SYSTEM_ACTIVITY') {
-        setSystemActivities(prev => [message.data, ...prev].slice(0, 15));
+      } else if (message.type === 'ALERT') {
+        const alertDet = message.data;
+        // Add to live detections first
+        setLiveDetections(prev => [alertDet, ...prev].slice(0, 10));
         
-        // Add notification
-        const newNotif = { ...message.data, id: Date.now() };
-        setNotifications(prev => [...prev, newNotif]);
+        // Add to active alerts overlay
+        setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
         
-        // Auto-remove notification after 5s
+        // Auto-remove alert from UI after 10 seconds
         setTimeout(() => {
-          setNotifications(prev => prev.filter(n => n.id !== newNotif.id));
-        }, 5000);
+          setActiveAlerts(prev => prev.filter(a => a.id !== alertDet.id));
+        }, 10000);
+
+        // Visual/Audio Cue (simulated)
+        if (typeof window !== 'undefined') {
+          console.warn(`SURVEILLANCE ALERT: ${alertDet.plate} matches ${alertDet.alertType}`);
+        }
+        
+        fetchStats();
+      } else if (message.type === 'SYSTEM_HEALTH') {
+        setSystemHealth(message.data);
       }
     };
 
     wsRef.current = ws;
-    return () => ws.close();
+    return () => {
+      ws.close();
+      clearInterval(timer);
+    };
   }, []);
+
+  useEffect(() => {
+    const processBatch = async () => {
+      if (isProcessingQueue || !isQueueRunning || uploadQueue.length === 0) return;
+      
+      const nextIndex = uploadQueue.findIndex(item => item.status === 'pending');
+      if (nextIndex === -1) {
+        setIsProcessingQueue(false);
+        setIsQueueRunning(false);
+        return;
+      }
+
+      setIsProcessingQueue(true);
+      setCurrentQueueIndex(nextIndex);
+      
+      setUploadQueue(prev => prev.map((item, idx) => 
+        idx === nextIndex ? { ...item, status: 'processing' } : item
+      ));
+
+      const item = uploadQueue[nextIndex];
+      setUploadedImage(item.base64);
+      setCurrentDetections([]);
+
+      try {
+        const results = await detectPlate(item.base64);
+        setQuotaUsed(prev => prev + 1);
+        
+        const validDetections = results ? results.filter(r => r.confidence * 100 >= settings.confidenceThreshold) : [];
+        
+        for (const det of validDetections) {
+          await saveDetectionToBackend({ ...det, image: item.base64 });
+        }
+
+        setUploadQueue(prev => prev.map((qItem, idx) => 
+          idx === nextIndex ? { ...qItem, status: 'done', results: validDetections } : qItem
+        ));
+        
+        if (validDetections.length > 0) {
+          setCurrentDetections(validDetections);
+        }
+      } catch (error) {
+        console.error("Batch processing error:", error);
+        setUploadQueue(prev => prev.map((qItem, idx) => 
+          idx === nextIndex ? { ...qItem, status: 'error' } : qItem
+        ));
+      } finally {
+        setIsProcessingQueue(false);
+      }
+    };
+
+    if (isQueueRunning && !isProcessingQueue && uploadQueue.some(item => item.status === 'pending')) {
+      processBatch();
+    }
+  }, [uploadQueue, isProcessingQueue, isQueueRunning, settings.confidenceThreshold]);
 
   // Real-time Detection Loop
   useEffect(() => {
     let interval: number | null = null;
 
     const runDetection = async () => {
-      if (videoRef.current && canvasRef.current) {
+      const activeCam = activeCameras.find(c => c.isSelected) || activeCameras[0];
+      if (activeCam?.videoRef.current && canvasRef.current) {
         const canvas = canvasRef.current;
-        const video = videoRef.current;
+        const video = activeCam.videoRef.current;
         const context = canvas.getContext('2d');
         
-        if (context) {
+        if (context && video.videoWidth > 0) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
           
-          const base64Image = canvas.toDataURL('image/jpeg', 0.8);
+          let base64Image = canvas.toDataURL('image/jpeg', 0.8);
+
+          // Apply Advanced Filters before ANPR
           try {
+            if (settings.imageFilters.noiseReduction) base64Image = await noiseReduction(base64Image);
+            if (settings.imageFilters.sharpen) base64Image = await sharpenImage(base64Image);
+            if (settings.imageFilters.enhanceContrast) base64Image = await enhanceContrast(base64Image);
+            if (settings.imageFilters.adaptiveThreshold) base64Image = await adaptiveThresholding(base64Image);
+            else if (settings.imageFilters.binarize) base64Image = await binarizeImage(base64Image);
+            
             const results = await detectPlate(base64Image);
             setQuotaUsed(prev => prev + 1);
             
@@ -123,11 +300,15 @@ export default function LiveView() {
               setQuotaRetryTime(null);
               
               const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
+              
+              // Enriched vehicle status
+              for (const det of validDetections) {
+                // Remove registry enrichment per user request (Privacy focus)
+                await saveDetectionToBackend({ ...det, image: base64Image });
+              }
+
               if (validDetections.length > 0) {
                 setCurrentDetections(validDetections);
-                for (const det of validDetections) {
-                  await saveDetectionToBackend(det);
-                }
                 
                 // Clear detection overlay after 4 seconds to ensure it stays visible until next pass
                 setTimeout(() => setCurrentDetections([]), 4000);
@@ -152,7 +333,7 @@ export default function LiveView() {
       // Run immediately
       runDetection();
       // Then set interval
-      interval = window.setInterval(runDetection, 5000);
+      interval = window.setInterval(runDetection, 10000);
       detectionIntervalRef.current = interval;
     } else {
       if (detectionIntervalRef.current) {
@@ -168,26 +349,60 @@ export default function LiveView() {
     };
   }, [isDetecting, isInitializing, isCoolingDown, settings.confidenceThreshold]);
 
-  // Effect to attach stream when video element becomes available
+  // Effect to attach streams when video elements become available
   useEffect(() => {
-    if (isDetecting && streamRef.current && videoRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-    }
-  }, [isDetecting]);
+    activeCameras.forEach(cam => {
+      if (isDetecting && cam.stream && cam.videoRef.current) {
+        cam.videoRef.current.srcObject = cam.stream;
+      }
+    });
+  }, [isDetecting, activeCameras]);
+
+  const broadcastActivity = (_message: string, _type: 'info' | 'warning' | 'error' | 'success' = 'info') => {
+    // Activity logging removed per user request
+  };
 
   const startCamera = async () => {
     setIsInitializing(true);
     setHasCameraError(false);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment',
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        } 
-      });
-      streamRef.current = stream;
+      // Use selectedDeviceIds or fallback to first available
+      const idsToOpen = selectedDeviceIds.length > 0 
+        ? selectedDeviceIds 
+        : (availableDevices.length > 0 ? [availableDevices[0].deviceId] : []);
+
+      const newActiveCameras: ActiveCamera[] = [];
+      
+      for (const deviceId of idsToOpen) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+              deviceId: { exact: deviceId },
+              facingMode: 'environment',
+              width: { ideal: 1920 },
+              height: { ideal: 1080 }
+            } 
+          });
+          
+          const deviceInfo = availableDevices.find(d => d.deviceId === deviceId);
+          
+          newActiveCameras.push({
+            id: deviceId,
+            name: deviceInfo?.label || `Camera ${newActiveCameras.length + 1}`,
+            stream,
+            videoRef: React.createRef(),
+            isSelected: newActiveCameras.length === 0
+          });
+        } catch (e) {
+          console.warn(`Failed to open camera ${deviceId}:`, e);
+        }
+      }
+      
+      setActiveCameras(newActiveCameras);
       setUploadedImage(null);
+      setUploadQueue([]);
+      setIsQueueRunning(false);
+      setCurrentQueueIndex(-1);
       setIsDetecting(true);
     } catch (err) {
       console.error("Camera access error:", err);
@@ -197,16 +412,63 @@ export default function LiveView() {
     }
   };
 
+  const toggleCameraSelection = (deviceId: string) => {
+    setSelectedDeviceIds(prev => 
+      prev.includes(deviceId) 
+        ? prev.filter(id => id !== deviceId) 
+        : [...prev, deviceId]
+    );
+  };
+
   const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
+    activeCameras.forEach(cam => {
+      if (cam.stream) {
+        cam.stream.getTracks().forEach(track => track.stop());
+      }
+      if (cam.videoRef.current) {
+        cam.videoRef.current.srcObject = null;
+      }
+    });
     setIsDetecting(false);
     setCurrentDetections([]);
+  };
+
+  const applyPreset = async (preset: any) => {
+    setZoom(preset.zoom || 1);
+    setFocus(preset.focus || 0);
+    
+    const activeCam = activeCameras.find(c => c.isSelected) || activeCameras[0];
+    if (activeCam?.stream) {
+      const track = activeCam.stream.getVideoTracks()[0];
+      if (track) {
+        try {
+          const constraints: any = {
+            advanced: [{ zoom: preset.zoom }]
+          };
+          
+          if (preset.pan) constraints.advanced[0].pan = preset.pan;
+          if (preset.tilt) constraints.advanced[0].tilt = preset.tilt;
+
+          await track.applyConstraints(constraints);
+        } catch (e) {
+          console.warn("Hardware constraints not supported, using simulated zoom/focus");
+        }
+      }
+    }
+  };
+
+  const addPreset = () => {
+    const name = prompt("Preset Identifier (e.g., Perimeter North):");
+    if (!name) return;
+    
+    const newPreset = {
+      id: Date.now().toString(),
+      name,
+      zoom: zoom,
+      focus: focus,
+    };
+    
+    updateSettings({ cameraPresets: [...settings.cameraPresets, newPreset] });
   };
 
   const handleFileUpload = () => {
@@ -214,31 +476,60 @@ export default function LiveView() {
   };
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const base64 = e.target?.result as string;
-        setUploadedImage(base64);
-        setIsDetecting(false);
-        setCurrentDetections([]);
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      setIsDetecting(false);
+      setCurrentDetections([]);
+      
+      const newItems: QueueItem[] = [];
+      const readFile = (file: File): Promise<string> => {
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.readAsDataURL(file);
+        });
       };
-      reader.readAsDataURL(file);
+
+      for (let i = 0; i < files.length; i++) {
+        const base64 = await readFile(files[i]);
+        newItems.push({
+          id: `${Date.now()}-${i}`,
+          name: files[i].name,
+          base64,
+          status: 'pending'
+        });
+      }
+
+      setUploadQueue(prev => [...prev, ...newItems]);
+      setIsQueueRunning(false);
+      
+      // If single file, set it as active immediately for preview
+      if (files.length === 1) {
+        setUploadedImage(newItems[0].base64);
+      }
     }
   };
 
   const handleManualDetect = async () => {
+    if (uploadQueue.some(i => i.status === 'pending')) {
+      setIsQueueRunning(true);
+      return;
+    }
+
     let imageToDetect = uploadedImage;
 
-    if (!imageToDetect && isDetecting && videoRef.current && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const video = videoRef.current;
-      const context = canvas.getContext('2d');
-      if (context) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        imageToDetect = canvas.toDataURL('image/jpeg', 0.8);
+    if (!imageToDetect && isDetecting) {
+      const activeCam = activeCameras.find(c => c.isSelected) || activeCameras[0];
+      if (activeCam?.videoRef.current && canvasRef.current) {
+        const canvas = canvasRef.current;
+        const video = activeCam.videoRef.current;
+        const context = canvas.getContext('2d');
+        if (context) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          imageToDetect = canvas.toDataURL('image/jpeg', 0.8);
+        }
       }
     }
 
@@ -254,10 +545,13 @@ export default function LiveView() {
         setHasNetworkError(false);
         
         const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
-        setCurrentDetections(validDetections);
+        
         for (const det of validDetections) {
-          await saveDetectionToBackend(det);
+          // Remove registry enrichment per user request (Privacy focus)
+          await saveDetectionToBackend({ ...det, image: imageToDetect });
         }
+        
+        setCurrentDetections(validDetections);
       }
     } catch (error: any) {
       console.error("Manual detection failed:", error);
@@ -272,9 +566,10 @@ export default function LiveView() {
   };
 
   const handleCapture = () => {
-    if (videoRef.current && canvasRef.current) {
+    const activeCam = activeCameras.find(c => c.isSelected) || activeCameras[0];
+    if (activeCam?.videoRef.current && canvasRef.current) {
       const canvas = canvasRef.current;
-      const video = videoRef.current;
+      const video = activeCam.videoRef.current;
       const context = canvas.getContext('2d');
       if (context) {
         canvas.width = video.videoWidth;
@@ -288,9 +583,10 @@ export default function LiveView() {
   };
 
   const handleCaptureAndDetect = async () => {
-    if (videoRef.current && canvasRef.current) {
+    const activeCam = activeCameras.find(c => c.isSelected) || activeCameras[0];
+    if (activeCam?.videoRef.current && canvasRef.current) {
       const canvas = canvasRef.current;
-      const video = videoRef.current;
+      const video = activeCam.videoRef.current;
       const context = canvas.getContext('2d');
       if (context) {
         canvas.width = video.videoWidth;
@@ -308,10 +604,13 @@ export default function LiveView() {
           setQuotaUsed(prev => prev + 1);
           if (results && results.length > 0) {
             const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
-            setCurrentDetections(validDetections);
+            
             for (const det of validDetections) {
-              await saveDetectionToBackend(det);
+              // Remove registry enrichment per user request (Privacy focus)
+              await saveDetectionToBackend({ ...det, image: captured });
             }
+            
+            setCurrentDetections(validDetections);
           }
         } catch (error) {
           console.error("Capture & Detect failed:", error);
@@ -325,15 +624,18 @@ export default function LiveView() {
   const handleDownloadFrame = () => {
     let imageToDownload = uploadedImage;
 
-    if (!imageToDownload && isDetecting && videoRef.current && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const video = videoRef.current;
-      const context = canvas.getContext('2d');
-      if (context) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        imageToDownload = canvas.toDataURL('image/jpeg', 0.9);
+    if (!imageToDownload && isDetecting && canvasRef.current) {
+      const activeCam = activeCameras.find(c => c.isSelected) || activeCameras[0];
+      if (activeCam?.videoRef.current) {
+        const canvas = canvasRef.current;
+        const video = activeCam.videoRef.current;
+        const context = canvas.getContext('2d');
+        if (context) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          imageToDownload = canvas.toDataURL('image/jpeg', 0.9);
+        }
       }
     }
 
@@ -346,37 +648,33 @@ export default function LiveView() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8 pb-32 md:pb-12 px-1">
       {/* Analytics Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {[
           { 
-            label: "Today's Detections", 
-            value: stats.todayDetections.toLocaleString(), 
-            change: (stats.detectionsChange || 0) === 0 ? "Live" : `${(stats.detectionsChange || 0) > 0 ? '+' : ''}${(stats.detectionsChange || 0).toFixed(1)}%`, 
-            icon: Zap, 
-            color: "text-primary" 
+            label: "Total Plates Today", 
+            value: (stats?.todayDetections ?? 0).toLocaleString(), 
+            change: (stats?.detectionsChange || 0) === 0 ? "Normal" : `${(stats?.detectionsChange || 0) > 0 ? '+' : ''}${(stats?.detectionsChange || 0).toFixed(1)}%`, 
+            icon: Car, 
+            color: "text-primary",
+            bg: "bg-primary-container/10"
           },
           { 
             label: "Active Cameras", 
-            value: stats.activeCameras.toString(), 
+            value: (stats?.activeCameras ?? 0).toString(), 
             change: "Stable", 
-            icon: Activity, 
-            color: "text-success" 
+            icon: Video, 
+            color: "text-tertiary",
+            bg: "bg-tertiary-container/10"
           },
           { 
-            label: "Watchlist Hits", 
-            value: stats.watchlistHits.toString(), 
-            change: stats.watchlistHits > 0 ? "Critical" : "Clear", 
-            icon: Shield, 
-            color: stats.watchlistHits > 0 ? "text-error" : "text-success" 
-          },
-          { 
-            label: "Average Confidence", 
-            value: `${((stats.avgConfidence || 0) * 100).toFixed(1)}%`, 
-            change: (stats.confidenceChange || 0) === 0 ? "Real-time" : `${(stats.confidenceChange || 0) > 0 ? '+' : ''}${(stats.confidenceChange || 0).toFixed(1)}%`, 
+            label: "Recognition Accuracy", 
+            value: `${((stats?.avgConfidence || 0) * 100).toFixed(1)}%`, 
+            change: (stats?.confidenceChange || 0) === 0 ? "Real-time" : `${(stats?.confidenceChange || 0) > 0 ? '+' : ''}${(stats?.confidenceChange || 0).toFixed(1)}%`, 
             icon: TrendingUp, 
-            color: "text-tertiary" 
+            color: "text-secondary",
+            bg: "bg-secondary-container/20"
           },
         ].map((stat, i) => (
           <motion.div 
@@ -384,318 +682,644 @@ export default function LiveView() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            className="bg-surface border border-surface-highest p-4 rounded-xl shadow-sm hover:shadow-md transition-shadow"
+            className="bg-surface-container-lowest p-6 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-md transition-all card-shadow"
           >
-            <div className="flex justify-between items-start mb-2">
-              <div className={`p-2 rounded-lg bg-surface-low ${stat.color}`}>
-                <stat.icon size={18} />
+            <div className="flex justify-between items-start mb-4">
+              <div className={`p-3 rounded-xl ${stat.bg} ${stat.color}`}>
+                <stat.icon size={20} />
               </div>
-              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                stat.change.includes('+') ? 'bg-success/10 text-success' : 
-                stat.change === 'Critical' ? 'bg-error/10 text-error' : 'bg-surface-highest text-on-surface-variant'
+              <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
+                stat.change.includes('+') ? 'bg-tertiary-container/10 text-tertiary' : 
+                stat.change === 'Critical' ? 'bg-error-container text-error' : 'bg-surface-container-highest text-on-surface-variant'
               }`}>
                 {stat.change}
               </span>
             </div>
-            <p className="text-2xl font-bold text-on-surface">{stat.value}</p>
-            <p className="text-xs text-on-surface-variant font-medium">{stat.label}</p>
+            <p className="text-3xl font-black tracking-tight text-on-surface">{stat.value}</p>
+            <p className="text-[10px] text-on-surface-variant font-black uppercase tracking-widest mt-1 opacity-60">{stat.label}</p>
           </motion.div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Main Monitor Section */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-lg group relative">
-            {/* Camera Info Overlay */}
-            <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
-              <div className="bg-surface/80 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${isDetecting ? 'bg-success animate-pulse' : 'bg-on-surface-variant'}`}></div>
-                <span className="text-[10px] font-bold text-on-surface uppercase tracking-widest">
-                  CAM-01 • MAIN ENTRANCE
+        <div className="lg:col-span-3 space-y-8">
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-3xl overflow-hidden shadow-md relative group">
+            {/* Header */}
+            <div className="px-4 sm:px-10 py-4 sm:py-6 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-4 sm:gap-0">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-5">
+                <div className={`w-2.5 h-2.5 rounded-full ${isDetecting ? 'bg-primary animate-pulse' : 'bg-outline-variant'}`}></div>
+                <h3 className="text-sm sm:text-lg font-black text-on-surface tracking-tighter uppercase whitespace-nowrap">ENTRANCE-001</h3>
+                <span className="text-[8px] sm:text-[10px] text-primary font-black uppercase tracking-[0.2em] px-2 sm:px-3 py-1 bg-primary-container/10 rounded-full border border-primary/5">
+                  {isDetecting ? 'Active' : 'Standby'}
                 </span>
-              </div>
-              <div className="bg-surface/80 backdrop-blur-md border border-white/10 px-3 py-1.5 rounded-lg">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-                  {new Date().toLocaleTimeString()}
+                <span className="hidden md:flex items-center gap-2 text-[10px] text-on-surface-variant font-bold uppercase tracking-widest pl-4 border-l border-outline-variant/10 opacity-60">
+                   <Clock size={12} className="text-primary" />
+                   {currentTime}
                 </span>
-              </div>
-            </div>
-
-            {/* Camera Actions Overlay */}
-            <div className="absolute top-4 right-4 z-20 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              {isDetecting && (
-                <button 
-                  onClick={stopCamera}
-                  className="p-2 bg-error/20 backdrop-blur-md border border-error/20 rounded-lg text-error hover:bg-error/30 transition-colors"
-                  title="Turn Off Camera"
-                >
-                  <CameraOff size={16} />
-                </button>
-              )}
-              <button className="p-2 bg-surface/80 backdrop-blur-md border border-white/10 rounded-lg text-on-surface-variant hover:text-on-surface transition-colors">
-                <Maximize2 size={16} />
-              </button>
-              <button className="p-2 bg-surface/80 backdrop-blur-md border border-white/10 rounded-lg text-on-surface-variant hover:text-on-surface transition-colors">
-                <SettingsIcon size={16} />
-              </button>
-            </div>
-
-            {/* Video Stage */}
-            <div className="aspect-video bg-surface-low relative flex items-center justify-center overflow-hidden">
-              {!isDetecting && !uploadedImage ? (
-                <div className="text-center p-8">
-                  <div className="w-16 h-16 bg-surface-high rounded-2xl flex items-center justify-center mx-auto mb-4 text-on-surface-variant">
-                    <CameraOff size={32} />
+                
+                {systemHealth && (
+                  <div className="flex items-center gap-4 sm:gap-6 sm:pl-6 sm:border-l border-outline-variant/10">
+                    <div className="flex flex-col">
+                       <span className="text-[6px] sm:text-[7px] font-black uppercase text-on-surface-variant/40 tracking-widest">Engine</span>
+                       <div className="flex items-center gap-1.5">
+                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                         <span className="text-[8px] sm:text-[9px] font-black text-on-surface uppercase tracking-tight">{systemHealth.dbStatus}</span>
+                       </div>
+                    </div>
+                    <div className="hidden sm:flex flex-col">
+                       <span className="text-[7px] font-black uppercase text-on-surface-variant/40 tracking-widest">CPU</span>
+                       <span className="text-[9px] font-black text-primary uppercase tracking-tight">{systemHealth.cpu}%</span>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-bold text-on-surface mb-1">Camera Offline</h3>
-                  <p className="text-sm text-on-surface-variant max-w-xs mx-auto">
-                    Waiting for camera input. Connect a live feed or upload an image to begin detection.
+                )}
+              </div>
+            </div>
+
+            {/* Display Area */}
+            <div className="relative aspect-video bg-inverse-surface group">
+              {/* Active Alerts Overlay */}
+              <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-50 flex flex-col gap-2 sm:gap-3 pointer-events-none max-w-[calc(100%-1rem)]">
+                <AnimatePresence>
+                  {activeAlerts.map((alert) => (
+                    <motion.div
+                      key={alert.id}
+                      initial={{ opacity: 0, x: 50, scale: 0.9 }}
+                      animate={{ opacity: 1, x: 0, scale: 1 }}
+                      exit={{ opacity: 0, x: 20, scale: 0.8 }}
+                      className="bg-error text-white p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-2xl border border-white/20 min-w-[200px] sm:min-w-[280px] pointer-events-auto"
+                    >
+                      <div className="flex items-start gap-3 sm:gap-4">
+                        <div className="p-1.5 sm:p-2 bg-white/20 rounded-lg sm:rounded-xl">
+                          <AlertCircle size={16} className="sm:w-5 sm:h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-center mb-0.5 sm:mb-1">
+                            <span className="text-[7px] sm:text-[9px] font-black uppercase tracking-[0.2em] opacity-80 truncate uppercase">{alert.alertType} HIT</span>
+                            <span className="text-[7px] sm:text-[9px] font-black uppercase tracking-[0.2em] whitespace-nowrap">{new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          <p className="text-base sm:text-xl font-black tracking-widest mb-0.5 sm:mb-1 truncate">{alert.plate}</p>
+                          <p className="text-[8px] sm:text-[10px] font-bold opacity-90 leading-tight uppercase tracking-tight truncate">{alert.reason}</p>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+
+              {!isDetecting && !uploadedImage ? (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-container-lowest text-center p-6 sm:p-12 transition-all duration-700">
+                  <div className="w-20 h-20 sm:w-32 sm:h-32 bg-surface-container-high rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-8 shadow-sm border border-outline-variant/10 relative group-hover:scale-105 transition-transform duration-500">
+                    <CameraOff size={32} className="text-outline-variant sm:w-16 sm:h-16" strokeWidth={1.5} />
+                    <div className="absolute inset-0 border-2 border-outline-variant/10 rounded-2xl sm:rounded-3xl scale-110 opacity-50"></div>
+                  </div>
+                  <h4 className="text-lg sm:text-2xl font-black text-on-surface mb-2 sm:mb-3 tracking-tighter uppercase whitespace-nowrap">Camera Offline</h4>
+                  <p className="text-[10px] sm:text-sm text-on-surface-variant max-w-[200px] sm:max-w-sm font-medium leading-relaxed opacity-60 uppercase tracking-tight">
+                    Wait for input or connect a live feed to begin detection.
                   </p>
-                  <button 
-                    onClick={startCamera}
-                    disabled={isInitializing}
-                    className="mt-6 px-6 py-2.5 bg-primary hover:bg-primary-container text-white rounded-xl font-semibold text-sm transition-all flex items-center gap-2 mx-auto"
-                  >
-                    {isInitializing ? <Activity size={18} className="animate-spin" /> : <PlayCircle size={18} />}
-                    Initialize Camera
-                  </button>
                 </div>
               ) : (
-                <>
-                  {uploadedImage ? (
-                    <img src={uploadedImage} className="w-full h-full object-contain" alt="Uploaded" />
-                  ) : (
-                    <video 
-                      ref={videoRef} 
-                      autoPlay 
-                      playsInline 
-                      muted 
-                      className="w-full h-full object-cover"
-                    />
-                  )}
+                <div className="w-full h-full relative">
+                  {/* HUD Brackets */}
+                  <div className="absolute inset-10 pointer-events-none z-20 transition-all duration-1000 group-hover:inset-6">
+                    <div className="hud-bracket hud-bracket-tl"></div>
+                    <div className="hud-bracket hud-bracket-tr"></div>
+                    <div className="hud-bracket hud-bracket-bl"></div>
+                    <div className="hud-bracket hud-bracket-br"></div>
+                  </div>
 
-                  {/* AI Detection Overlay */}
-                  <AnimatePresence>
-                    {currentDetections.map((det, idx) => det.bbox && (
-                      <motion.div 
-                        key={`${det.plate}-${idx}`}
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        className="absolute inset-0 pointer-events-none z-10"
-                      >
-                        <div 
-                          className="absolute border-2 border-primary shadow-[0_0_20px_rgba(59,130,246,0.3)] rounded-sm"
-                          style={{
-                            left: `${(det.bbox.x / 1000) * 100}%`,
-                            top: `${(det.bbox.y / 1000) * 100}%`,
-                            width: `${(det.bbox.width / 1000) * 100}%`,
-                            height: `${(det.bbox.height / 1000) * 100}%`,
-                          }}
+
+                  {/* Overlays */}
+                  <div className="absolute inset-0 z-30 pointer-events-none p-4 sm:p-10 flex flex-col justify-between overflow-hidden">
+                    <AnimatePresence>
+                      {isQuotaExceeded && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -20 }}
+                          className="absolute top-10 left-1/2 -translate-x-1/2 bg-error text-white px-8 py-4 rounded-3xl shadow-2xl flex flex-col items-center gap-2 pointer-events-auto z-50 border-4 border-white/20"
                         >
-                          <div className="hud-bracket hud-bracket-tl"></div>
-                          <div className="hud-bracket hud-bracket-tr"></div>
-                          <div className="hud-bracket hud-bracket-bl"></div>
-                          <div className="hud-bracket hud-bracket-br"></div>
-                          
-                          <div className="absolute -top-12 left-0 bg-primary text-white text-[10px] px-3 py-1.5 font-bold rounded-lg shadow-xl flex flex-col min-w-[120px]">
-                            <div className="flex justify-between items-center mb-0.5">
-                              <span className="tracking-widest flex items-center gap-1">
-                                {det.plate}
-                                {det.is_enhanced && <Zap size={8} className="text-yellow-400 fill-yellow-400" />}
-                              </span>
-                              <span className="opacity-80">{((det.confidence || 0) * 100).toFixed(0)}%</span>
+                          <div className="flex items-center gap-3">
+                            <AlertCircle size={24} />
+                            <span className="font-black uppercase tracking-widest text-sm">Daily API Quota Reached</span>
+                          </div>
+                          <p className="text-[10px] font-bold opacity-90 uppercase tracking-tight text-center">
+                            Gemini AI Limit Exhausted (20/day). Sensor processing is paused until daily reset.
+                          </p>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    <div className="flex justify-between items-start w-full">
+                      {/* Floating Info Panel - Hidden on very small screens */}
+                      <motion.div 
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        className="glass-panel p-4 sm:p-6 rounded-3xl w-60 sm:w-72 pointer-events-auto shadow-2xl hidden xs:block"
+                      >
+                        <div className="flex items-center gap-3 mb-2 sm:mb-4">
+                          <Focus size={16} className="text-primary" />
+                          <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant line-clamp-1">Node Analytics</span>
+                        </div>
+                        <div className="space-y-3 sm:space-y-4">
+                          <div>
+                            <p className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Primary Target</p>
+                            <p className="text-xl sm:text-2xl font-black tracking-widest text-on-surface font-headline uppercase leading-none">
+                              {currentDetections[0]?.plate || '-- --- --'}
+                            </p>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-[8px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Status</p>
+                              <p className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
+                                currentDetections[0]?.status === 'Valid' ? 'bg-tertiary-container/10 text-tertiary shadow-sm' :
+                                currentDetections[0]?.status === 'Low Confidence' ? 'bg-amber-100 text-amber-700' :
+                                'bg-error-container text-error'
+                              }`}>
+                                {currentDetections[0]?.status || 'Idle'}
+                              </p>
                             </div>
-                            {det.make && (
-                              <span className="text-[8px] opacity-70 uppercase tracking-wider">{det.vehicle_type ? `${det.vehicle_type}: ` : ''}{det.make} {det.model}</span>
-                            )}
+                            <div className="text-right">
+                              <p className="text-[8px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Conf</p>
+                              <p className="text-[12px] sm:text-sm font-black text-primary font-headline">{currentDetections[0]?.confidence ? `${Math.round(currentDetections[0]?.confidence * 100)}%` : '0%'}</p>
+                            </div>
+                          </div>
+                          <div className="pt-2 border-t border-outline-variant/10">
+                            <p className="text-[8px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Intelligence</p>
+                            <p className="text-[10px] sm:text-xs font-bold text-on-surface truncate tracking-tight uppercase">
+                              {currentDetections[0]?.make || 'Spectral Scan...'} {currentDetections[0]?.model || ''}
+                            </p>
                           </div>
                         </div>
                       </motion.div>
-                    ))}
-                  </AnimatePresence>
-                </>
-              )}
 
-              {/* Status Bar */}
-              <div className="absolute bottom-4 left-4 right-4 z-20 flex justify-between items-center">
-                <div className="flex gap-2">
-                  {uploadedImage && (
-                    <button 
-                      onClick={() => {
-                        setUploadedImage(null);
-                        setCurrentDetections([]);
-                        startCamera();
-                      }}
-                      className="bg-primary/90 backdrop-blur-md text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg hover:bg-primary transition-all"
-                    >
-                      <Camera size={14} />
-                      BACK TO LIVE
-                    </button>
-                  )}
-                  {isQuotaExceeded && (
-                    <div className="bg-error/90 backdrop-blur-md text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg">
-                      <AlertCircle size={14} />
-                      QUOTA LIMIT REACHED
+                      {/* Right Settings Toggle Panel removed as per user request */}
                     </div>
-                  )}
-                  {hasNetworkError && (
-                    <div className="bg-warning/90 backdrop-blur-md text-white px-3 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-2 shadow-lg">
-                      <Activity size={14} />
-                      NETWORK UNSTABLE
+
+                    {/* Bottom Status Panel removed as per user request */}
+                  </div>
+
+                  {uploadedImage ? (
+                    <div className="relative w-full h-full overflow-hidden flex items-center justify-center bg-black">
+                      <div className="relative" style={{ aspectRatio: 'auto' }}>
+                        <img 
+                          src={uploadedImage} 
+                          className="max-w-full max-h-full object-contain transition-all duration-500" 
+                          style={{ 
+                            transform: `scale(${zoom})`,
+                            filter: `blur(${focus}px)`
+                          }}
+                          alt="Captured Frame" 
+                          referrerPolicy="no-referrer" 
+                        />
+                        {/* Overlay for uploaded image */}
+                        <div className="absolute inset-0 pointer-events-none z-40">
+                          <AnimatePresence>
+                            {currentDetections.map((det, idx) => {
+                              if (!det.bbox) return null;
+                              const centerX = det.bbox.x + det.bbox.width / 2;
+                              const centerY = det.bbox.y + det.bbox.height / 2;
+                              const isSquare = det.bbox.height / det.bbox.width > 0.5;
+                              const targetRatio = isSquare ? 1.5 : 4.1;
+                              let drawWidth = det.bbox.width;
+                              let drawHeight = det.bbox.width / targetRatio;
+                              if (Math.abs(drawHeight - det.bbox.height) > det.bbox.height * 0.4) {
+                                drawHeight = det.bbox.height;
+                                drawWidth = drawHeight * targetRatio;
+                              }
+                              return (
+                                <motion.div 
+                                  key={`${det.plate}-${idx}`}
+                                  initial={{ opacity: 0, scale: 0.9 }}
+                                  animate={{ 
+                                    opacity: 1, 
+                                    scale: 1,
+                                    boxShadow: activeAlerts.some(a => a.plate === det.plate) 
+                                      ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
+                                      : '0 0 30px rgba(37,99,235,0.6)'
+                                  }}
+                                  transition={{ 
+                                    boxShadow: { repeat: Infinity, duration: 1.5 }
+                                  }}
+                                  exit={{ opacity: 0, scale: 0.9 }}
+                                  className={`absolute border-2 rounded-sm transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
+                                    activeAlerts.some(a => a.plate === det.plate)
+                                      ? 'border-error border-[3px] z-50'
+                                      : 'border-blue-500 z-40'
+                                  }`}
+                                  style={{
+                                    left: `${(centerX / 1000) * 100}%`,
+                                    top: `${(centerY / 1000) * 100}%`,
+                                    width: `${(drawWidth / 1000) * 100}%`,
+                                    height: `${(drawHeight / 1000) * 100}%`,
+                                  }}
+                                >
+                                  <div className={`absolute -top-12 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 ${
+                                    activeAlerts.some(a => a.plate === det.plate)
+                                      ? 'bg-error animate-pulse'
+                                      : 'signature-gradient'
+                                  }`}>
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="tracking-[0.2em] uppercase flex items-center gap-1.5">
+                                        {activeAlerts.some(a => a.plate === det.plate) && <AlertCircle size={12} fill="currentColor" className="text-white" />}
+                                        {det.plate}
+                                      </span>
+                                      <span className={`text-[8px] px-1.5 py-0.5 rounded-lg border border-white/20 ${
+                                        activeAlerts.some(a => a.plate === det.plate) ? 'bg-white/20' :
+                                        det.status === 'Valid' ? 'bg-emerald-500/50' : 
+                                        det.status === 'Low Confidence' ? 'bg-amber-500/50' : 'bg-red-500/50'
+                                      }`}>
+                                        {activeAlerts.some(a => a.plate === det.plate) ? 'WATCHLIST HIT' : det.status}
+                                      </span>
+                                    </div>
+                                    <span className="text-[8px] opacity-70 uppercase leading-none mt-1 font-bold text-center">Conf: {Math.round(det.confidence * 100)}%</span>
+                                  </div>
+                                </motion.div>
+                              );
+                            })}
+                          </AnimatePresence>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={`w-full h-full ${settings.viewLayout === 'grid' && activeCameras.length > 1 ? 'grid grid-cols-2 gap-0.5' : 'flex'}`}>
+                      {activeCameras.map((cam) => (
+                        <div 
+                          key={cam.id} 
+                          onClick={() => setActiveCameras(prev => prev.map(c => ({ ...c, isSelected: c.id === cam.id })))}
+                          className={`relative flex-1 h-full overflow-hidden cursor-pointer group/cam ${settings.viewLayout === 'single' && !cam.isSelected ? 'hidden' : ''} ${cam.isSelected ? 'ring-2 ring-inset ring-blue-600 z-10' : ''}`}
+                        >
+                          <video 
+                            ref={cam.videoRef} 
+                            autoPlay 
+                            playsInline 
+                            muted 
+                            className="w-full h-full object-cover bg-black transition-all duration-500" 
+                            style={{ 
+                              transform: `scale(${cam.isSelected ? zoom : 1})`,
+                              filter: `blur(${cam.isSelected ? focus : 0}px)`
+                            }}
+                          />
+                          {/* Overlay for live camera (only on selected/detecting cam) */}
+                          {cam.isSelected && (
+                            <div className="absolute inset-0 pointer-events-none z-40">
+                              <AnimatePresence>
+                                {currentDetections.map((det, idx) => {
+                                  if (!det.bbox) return null;
+                                  const centerX = det.bbox.x + det.bbox.width / 2;
+                                  const centerY = det.bbox.y + det.bbox.height / 2;
+                                  const isSquare = det.bbox.height / det.bbox.width > 0.5;
+                                  const targetRatio = isSquare ? 1.5 : 4.1;
+                                  let drawWidth = det.bbox.width;
+                                  let drawHeight = det.bbox.width / targetRatio;
+                                  if (Math.abs(drawHeight - det.bbox.height) > det.bbox.height * 0.4) {
+                                    drawHeight = det.bbox.height;
+                                    drawWidth = drawHeight * targetRatio;
+                                  }
+                                    return (
+                                      <motion.div 
+                                        key={`${det.plate}-${idx}`}
+                                        initial={{ opacity: 0, scale: 0.9 }}
+                                        animate={{ 
+                                          opacity: 1, 
+                                          scale: 1,
+                                          boxShadow: activeAlerts.some(a => a.plate === det.plate) 
+                                            ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
+                                            : '0 0 30px rgba(37,99,235,0.6)'
+                                        }}
+                                        transition={{ 
+                                          boxShadow: { repeat: Infinity, duration: 1.5 }
+                                        }}
+                                        exit={{ opacity: 0, scale: 0.9 }}
+                                        className={`absolute border-2 rounded-sm transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
+                                          activeAlerts.some(a => a.plate === det.plate)
+                                            ? 'border-error border-[3px] z-50'
+                                            : 'border-blue-500 z-40'
+                                        }`}
+                                        style={{
+                                          left: `${(centerX / 1000) * 100}%`,
+                                          top: `${(centerY / 1000) * 100}%`,
+                                          width: `${(drawWidth / 1000) * 100}%`,
+                                          height: `${(drawHeight / 1000) * 100}%`,
+                                        }}
+                                      >
+                                        <div className={`absolute -top-12 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 ${
+                                          activeAlerts.some(a => a.plate === det.plate)
+                                            ? 'bg-error animate-pulse'
+                                            : 'signature-gradient'
+                                        }`}>
+                                          <div className="flex items-center justify-between gap-2">
+                                            <span className="tracking-[0.2em] uppercase flex items-center gap-1.5">
+                                              {activeAlerts.some(a => a.plate === det.plate) && <AlertCircle size={12} fill="currentColor" className="text-white" />}
+                                              {det.plate}
+                                            </span>
+                                            <span className={`text-[8px] px-1.5 py-0.5 rounded-lg border border-white/20 ${
+                                              activeAlerts.some(a => a.plate === det.plate) ? 'bg-white/20' :
+                                              det.status === 'Valid' ? 'bg-emerald-500/50' : 
+                                              det.status === 'Low Confidence' ? 'bg-amber-500/50' : 'bg-red-500/50'
+                                            }`}>
+                                              {activeAlerts.some(a => a.plate === det.plate) ? 'WATCHLIST HIT' : det.status}
+                                            </span>
+                                          </div>
+                                          <span className="text-[8px] opacity-70 uppercase leading-none mt-1 font-bold text-center">Conf: {Math.round(det.confidence * 100)}%</span>
+                                        </div>
+                                      </motion.div>
+                                    );
+                                })}
+                              </AnimatePresence>
+                            </div>
+                          )}
+                          {!cam.isSelected && (
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/cam:opacity-100 transition-opacity">
+                              <span className="text-[10px] font-black text-white uppercase tracking-widest">Select Node</span>
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
-              </div>
+              )}
             </div>
 
-            {/* Control Panel */}
-            <div className="p-4 bg-surface border-t border-surface-highest flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                {isDetecting ? (
-                  <button 
-                    onClick={stopCamera}
-                    className="px-4 py-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
+            {/* Primary Actions */}
+            <div className="px-10 py-8 border-t border-outline-variant/10 bg-surface-container-lowest relative z-20">
+              {/* Lens & Preset Control - Only visible when camera is active */}
+              <AnimatePresence>
+                {isDetecting && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                    animate={{ opacity: 1, height: 'auto', marginBottom: 32 }}
+                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                    className="flex flex-col md:flex-row items-center gap-10 overflow-hidden"
                   >
-                    <StopCircle size={16} className="text-error" />
-                    Stop & Turn Off Camera
-                  </button>
+                    <div className="flex-1 w-full space-y-4">
+                      <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
+                        <span className="flex items-center gap-2">
+                           <Maximize2 size={14} className="text-primary" />
+                           Digital Zoom ({zoom.toFixed(1)}x)
+                        </span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="1" 
+                        max="5" 
+                        step="0.1" 
+                        value={zoom} 
+                        onChange={(e) => setZoom(parseFloat(e.target.value))}
+                        className="w-full h-1.5 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary"
+                      />
+                    </div>
+
+                    <div className="flex-1 w-full space-y-4">
+                      <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
+                        <span className="flex items-center gap-2">
+                           <Focus size={14} className="text-primary" />
+                           Image Smoothness ({focus}px)
+                        </span>
+                      </div>
+                      <input 
+                        type="range" 
+                        min="0" 
+                        max="10" 
+                        step="1" 
+                        value={focus} 
+                        onChange={(e) => setFocus(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary"
+                      />
+                    </div>
+
+                    <div className="flex-shrink-0 flex items-center gap-3">
+                      <button 
+                        onClick={addPreset}
+                        className="flex flex-col items-center justify-center w-12 h-12 rounded-2xl bg-surface-container-high border border-outline-variant/10 text-on-surface-variant hover:text-primary transition-all active:scale-95"
+                        title="Save Preset"
+                      >
+                        <Save size={18} />
+                      </button>
+                      <div className="h-10 w-px bg-outline-variant/20 mx-1" />
+                      <div className="flex gap-2">
+                        {settings.cameraPresets.map(preset => (
+                          <button
+                            key={preset.id}
+                            onClick={() => applyPreset(preset)}
+                            className="px-4 py-2 bg-surface-container-low border border-outline-variant/10 rounded-xl text-[9px] font-black uppercase tracking-widest text-on-surface-variant hover:border-primary/50 hover:text-primary transition-all whitespace-nowrap"
+                          >
+                            {preset.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Action Divider */}
+              <div className="h-px w-full bg-outline-variant/10 mb-8" />
+
+              <div className="flex flex-wrap items-center justify-center gap-4 w-full">
+                {isDetecting ? (
+                  <>
+                    <button 
+                      onClick={stopCamera}
+                      className="px-6 py-4.5 bg-error-container text-error hover:opacity-90 border border-error/10 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 min-w-[160px]"
+                    >
+                      <StopCircle size={18} />
+                      Stop Sensor
+                    </button>
+                    <button 
+                      onClick={handleCapture}
+                      className="px-6 py-4.5 bg-on-surface text-surface hover:opacity-90 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all shadow-md active:scale-95 min-w-[160px]"
+                    >
+                      <Camera size={18} />
+                      Capture
+                    </button>
+                  </>
                 ) : (
                   <button 
                     onClick={startCamera}
-                    className="px-4 py-2 bg-primary text-white hover:bg-primary-container rounded-xl text-xs font-bold flex items-center gap-2 transition-all shadow-lg shadow-primary/10"
+                    className="signature-gradient text-white px-8 py-4.5 rounded-3xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/20 flex items-center justify-center gap-3 active:scale-95 transition-all group min-w-[200px]"
                   >
-                    <PlayCircle size={16} />
-                    Start Monitoring
+                    <Video size={18} className="group-hover:scale-110 transition-transform" />
+                    Start Live Camera
                   </button>
                 )}
+                
                 <button 
                   onClick={handleFileUpload}
-                  className="px-4 py-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
+                  className="px-8 py-4.5 bg-surface-container-high text-on-surface hover:bg-surface-container-highest border border-outline-variant/10 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 min-w-[180px]"
                 >
-                  <CloudUpload size={16} className="text-primary" />
-                  Upload Frame
+                  <CloudUpload size={18} />
+                  Upload & Batch Process
                 </button>
-                {isDetecting && (
-                  <button 
-                    onClick={handleCapture}
-                    className="px-4 py-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
-                  >
-                    <Camera size={16} className="text-tertiary" />
-                    Capture
-                  </button>
-                )}
-              </div>
 
-              <div className="flex items-center gap-3">
-                <div className="text-right">
-                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Confidence</p>
-                  <p className="text-xs font-black text-primary">{settings.confidenceThreshold}%</p>
-                </div>
                 <button 
-                  onClick={handleDownloadFrame}
-                  disabled={!isDetecting && !uploadedImage}
-                  className="p-2 bg-surface-low border border-surface-highest text-on-surface hover:bg-surface-high rounded-xl transition-all disabled:opacity-30"
-                  title="Download Current Frame"
-                >
-                  <Download size={18} />
-                </button>
-                <button 
-                  onClick={isDetecting ? handleCaptureAndDetect : handleManualDetect}
-                  disabled={isProcessing || (!isDetecting && !uploadedImage)}
-                  className={`px-6 py-2 rounded-xl text-xs font-bold transition-all ${
-                    isProcessing 
-                      ? 'bg-surface-highest text-on-surface-variant' 
-                      : 'bg-primary text-white hover:bg-primary-container shadow-lg shadow-primary/20'
+                  onClick={isDetecting ? handleCaptureAndDetect : (isQueueRunning ? () => setIsQueueRunning(false) : handleManualDetect)}
+                  disabled={(isProcessing || isProcessingQueue) || (!isDetecting && !uploadedImage && uploadQueue.length === 0)}
+                  className={`px-10 py-4.5 rounded-3xl text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3 min-w-[200px] ${
+                    (isProcessing || isProcessingQueue) 
+                      ? 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed' 
+                      : (isDetecting || uploadedImage || uploadQueue.length > 0)
+                        ? (isQueueRunning ? 'bg-amber-500 text-white shadow-amber-500/20' : 'bg-primary text-white hover:opacity-90 shadow-primary/20')
+                        : 'bg-surface-container-low text-on-surface-variant/40 cursor-not-allowed border border-outline-variant/5'
                   }`}
                 >
-                  {isProcessing ? 'Processing...' : (isDetecting ? 'Capture & Detect' : 'Analyze Frame')}
+                  {(isProcessing || isProcessingQueue) ? (
+                    <div className="flex items-center gap-3 justify-center">
+                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                      <span>Processing</span>
+                    </div>
+                  ) : (
+                    <>
+                      {isQueueRunning ? <StopCircle size={18} /> : <ScanEye size={18} />}
+                      <span>{isQueueRunning ? 'Pause Queue' : 'Start Detection'}</span>
+                    </>
+                  )}
                 </button>
               </div>
-            </div>
-          </div>
-
-          {/* System Activity Feed */}
-          <div className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-sm">
-            <div className="p-4 border-b border-surface-highest flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Activity size={16} className="text-primary" />
-                <h3 className="text-xs font-bold text-on-surface uppercase tracking-widest">System Activity</h3>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Auto-refresh: 60s</span>
-                <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse"></div>
-              </div>
-            </div>
-            <div className="max-h-[200px] overflow-y-auto divide-y divide-surface-highest custom-scrollbar">
-              {systemActivities.length > 0 ? (
-                systemActivities.map((activity) => (
-                  <div key={activity.id} className="p-3 flex items-start gap-4 hover:bg-surface-low transition-colors">
-                    <span className="text-[10px] font-mono text-on-surface-variant whitespace-nowrap pt-0.5">
-                      {new Date(activity.timestamp).toLocaleTimeString([], { hour12: false })}
-                    </span>
-                    <p className="text-xs text-on-surface font-medium leading-relaxed">
-                      {activity.message}
-                    </p>
-                  </div>
-                ))
-              ) : (
-                <div className="p-8 text-center">
-                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest opacity-50">
-                    Waiting for system events...
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         </div>
 
         {/* Sidebar: Recent Detections */}
-        <div className="space-y-6">
-          <div className="bg-surface border border-surface-highest rounded-2xl shadow-lg flex flex-col h-[calc(100vh-280px)] lg:h-[600px]">
-            <div className="p-4 border-b border-surface-highest flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">Live Detections</h3>
-              <Activity size={14} className="text-primary animate-pulse" />
+        <div className="space-y-8">
+          {/* Batch Processing Queue */}
+          {uploadQueue.length > 0 && (
+            <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col max-h-[300px] overflow-hidden">
+              <div className="p-4 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
+                <h3 className="text-[10px] font-black uppercase tracking-widest text-on-surface leading-none">Processing Queue ({uploadQueue.filter(i => i.status === 'done').length}/{uploadQueue.length})</h3>
+                <button 
+                  onClick={() => {
+                    setUploadQueue([]);
+                    setUploadedImage(null);
+                    setCurrentDetections([]);
+                    setCurrentQueueIndex(-1);
+                  }}
+                  className="text-error hover:text-error/80 transition-colors"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+                {uploadQueue.map((item, idx) => (
+                  <div 
+                    key={item.id}
+                    onClick={() => {
+                      if (item.status === 'done' || item.status === 'error') {
+                        setUploadedImage(item.base64);
+                        setCurrentDetections(item.results || []);
+                        setCurrentQueueIndex(idx);
+                      }
+                    }}
+                    className={`flex items-center gap-3 p-2 rounded-xl transition-all cursor-pointer border ${
+                      currentQueueIndex === idx ? 'bg-primary/5 border-primary/20' : 'hover:bg-surface-container-low border-transparent'
+                    }`}
+                  >
+                    <div className="relative w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-black">
+                      <img src={item.base64} className="w-full h-full object-cover opacity-60" alt="" referrerPolicy="no-referrer" />
+                      {item.status === 'processing' && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                          <Loader2 size={16} className="text-white animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[9px] font-bold text-on-surface truncate uppercase tracking-tight">{item.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`text-[7px] font-black uppercase tracking-widest ${
+                          item.status === 'done' ? 'text-tertiary' :
+                          item.status === 'processing' ? 'text-primary' :
+                          item.status === 'error' ? 'text-error' : 'text-outline-variant'
+                        }`}>
+                          {item.status}
+                        </span>
+                        {item.status === 'done' && item.results && (
+                          <span className="text-[7px] font-bold text-on-surface-variant bg-surface-container-highest px-1.5 py-0.5 rounded">
+                            {item.results.length} PLATES
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {item.status === 'done' && (
+                      <CheckCircle2 size={14} className="text-tertiary" />
+                    )}
+                    {item.status === 'error' && (
+                      <AlertCircle size={14} className="text-error" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col h-[calc(100vh-280px)] lg:h-[700px] overflow-hidden">
+            <div className="p-6 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
+              <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface leading-none">Recent Scans</h3>
+              <div className="flex items-center gap-2">
+                <Activity size={16} className="text-blue-600 animate-pulse" />
+              </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
               {liveDetections.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-6 opacity-50">
-                  <Database size={32} className="mb-2" />
-                  <p className="text-xs font-medium">No recent activity</p>
+                <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
+                  <Database size={40} className="mb-4 text-slate-300" />
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Awaiting Scans...</p>
                 </div>
               ) : (
                 liveDetections.map((det, i) => (
-                  <motion.div 
-                    key={det.id || i}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="p-3 bg-surface-low border border-surface-highest rounded-xl hover:border-primary/30 transition-all cursor-pointer group"
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-sm font-black text-on-surface tracking-tight group-hover:text-primary transition-colors flex items-center gap-1">
-                        {det.plate}
-                        {det.is_enhanced && <Zap size={10} className="text-yellow-500 fill-yellow-500" />}
-                      </span>
-                      <span className="text-[10px] font-bold text-success bg-success/10 px-1.5 py-0.5 rounded">
-                        {Math.round(det.confidence * 100)}%
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
-                        <Clock size={10} />
-                        <span>{new Date(det.timestamp).toLocaleTimeString()}</span>
+                    <motion.div 
+                      key={det.id || i}
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className={`p-4 bg-surface-container-lowest border border-outline-variant/5 rounded-2xl hover:bg-surface-container-low hover:scale-[1.01] transition-all cursor-pointer group shadow-sm ${
+                        det.status === 'Valid' ? 'border-l-4 border-l-primary' : 
+                        det.status === 'Low Confidence' ? 'border-l-4 border-l-amber-500' : 
+                        'border-l-4 border-l-error'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start mb-3">
+                        <span className={`text-lg font-bold tracking-widest group-hover:text-primary transition-colors flex items-center gap-2 font-headline leading-none ${
+                          det.status === 'Valid' ? 'text-on-surface' :
+                          det.status === 'Low Confidence' ? 'text-amber-700' :
+                          'text-error'
+                        }`}>
+                          {det.plate}
+                          {det.is_enhanced && <Zap size={12} className="text-primary fill-primary animate-pulse" />}
+                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${
+                            det.status === 'Valid' ? 'bg-primary text-white' : 
+                            det.status === 'Low Confidence' ? 'bg-amber-500 text-white' : 
+                            'bg-error text-white'
+                          }`}>
+                            {Math.round(det.confidence * 100)}%
+                          </span>
+                          <span className="text-[7px] font-black uppercase tracking-widest opacity-60 text-outline">
+                            {det.status}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
-                        <MapPin size={10} />
-                        <span>{det.location || 'Main Entrance'}</span>
+                    
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div className="flex items-center gap-2 text-[10px] text-on-surface-variant font-bold uppercase tracking-tight opacity-70">
+                        <Clock size={12} className="text-primary/60" />
+                        <span>{new Date(det.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-on-surface-variant font-bold uppercase tracking-tight opacity-70">
+                        <MapPin size={12} className="text-primary/60" />
+                        <span className="truncate">{det.location || 'Entrance A'}</span>
                       </div>
                     </div>
+
                     {det.make && (
-                      <div className="mt-2 pt-2 border-t border-surface-highest flex items-center justify-between">
-                        <span className="text-[9px] font-bold text-on-surface uppercase">{det.vehicle_type ? `${det.vehicle_type}: ` : ''}{det.make} {det.model}</span>
-                        <ExternalLink size={10} className="text-on-surface-variant group-hover:text-primary transition-colors" />
+                      <div className="pt-4 border-t border-outline-variant/10 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-tight leading-none truncate pr-2 opacity-80">
+                            {det.vehicle_type ? `${det.vehicle_type}` : 'VEHICLE'} • <span className="text-primary font-black uppercase">{det.make} {det.model}</span>
+                          </span>
+                          <ExternalLink size={12} className="text-outline-variant group-hover:text-primary transition-colors flex-shrink-0" />
+                        </div>
                       </div>
                     )}
                   </motion.div>
@@ -703,37 +1327,60 @@ export default function LiveView() {
               )}
             </div>
             
-            <button className="p-4 text-[10px] font-bold text-primary uppercase tracking-widest border-t border-surface-highest hover:bg-surface-low transition-all">
+            <button 
+              onClick={() => window.dispatchEvent(new CustomEvent('changeTab', { detail: 'history' }))}
+              className="p-5 text-[10px] font-black text-primary uppercase tracking-[0.2em] border-t border-outline-variant/10 hover:bg-surface-container-low transition-all bg-surface-container-lowest"
+            >
               View Full History
             </button>
           </div>
 
-          {/* Quick Actions / Tools */}
-          <div className="bg-surface border border-surface-highest rounded-2xl p-4 shadow-sm">
-            <h3 className="text-xs font-bold uppercase tracking-widest text-on-surface-variant mb-4">Quick Tools</h3>
-            <div className="grid grid-cols-2 gap-2">
+          {/* Quick Actions / Node Tools */}
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-6 shadow-sm">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant mb-6">System Status</h3>
+            <div className="flex flex-col gap-4">
               <button 
                 onClick={() => {
-                  const headers = ['Plate', 'Timestamp', 'Confidence'];
-                  const csvContent = [
-                    headers.join(','),
-                    ...liveDetections.map(det => `${det.plate},${det.timestamp},${det.confidence}`)
-                  ].join('\n');
-                  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const link = document.createElement('a');
-                  link.setAttribute('href', url);
-                  link.setAttribute('download', `live_detections_${new Date().toISOString()}.csv`);
-                  link.click();
+                  const doc = new jsPDF();
+                  
+                  // PDF Header
+                  doc.setFontSize(18);
+                  doc.setTextColor(30, 41, 59); // slate-800
+                  doc.text('Security Report: Recent Scans', 14, 22);
+                  
+                  doc.setFontSize(10);
+                  doc.setTextColor(100, 116, 139); // slate-500
+                  doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
+                  doc.text(`Camera ID: ENTRANCE-001`, 14, 35);
+                  
+                  const tableHeaders = [['Plate', 'Timestamp', 'Confidence', 'Make', 'Model']];
+                  const tableData = liveDetections.map(det => [
+                    det.plate,
+                    new Date(det.timestamp).toLocaleString(),
+                    `${((det.confidence || 0) * 100).toFixed(1)}%`,
+                    det.make || 'N/A',
+                    det.model || 'N/A'
+                  ]);
+
+                  autoTable(doc, {
+                    startY: 45,
+                    head: tableHeaders,
+                    body: tableData,
+                    theme: 'striped',
+                    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 10, fontStyle: 'bold' },
+                    bodyStyles: { fontSize: 9, textColor: 51 },
+                    alternateRowStyles: { fillColor: [248, 250, 252] },
+                    margin: { top: 45 }
+                  });
+
+                  doc.save(`operational_logs_${new Date().getTime()}.pdf`);
                 }}
-                className="p-3 bg-surface-low hover:bg-surface-high border border-surface-highest rounded-xl text-center transition-all group"
+                className="p-4 bg-slate-50 hover:bg-slate-100 border border-slate-100 rounded-2xl text-center transition-all group flex flex-col items-center justify-center gap-2"
               >
-                <Database size={18} className="mx-auto mb-1 text-on-surface-variant group-hover:text-primary" />
-                <span className="text-[10px] font-bold text-on-surface">Export Log</span>
-              </button>
-              <button className="p-3 bg-surface-low hover:bg-surface-high border border-surface-highest rounded-xl text-center transition-all group">
-                <Shield size={18} className="mx-auto mb-1 text-on-surface-variant group-hover:text-error" />
-                <span className="text-[10px] font-bold text-on-surface">Watchlist</span>
+                <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 group-hover:text-blue-600 shadow-sm transition-colors border border-slate-100">
+                  <Database size={20} />
+                </div>
+                <span className="text-[9px] font-bold text-slate-800 uppercase tracking-widest">Export Logs</span>
               </button>
             </div>
           </div>
@@ -746,44 +1393,10 @@ export default function LiveView() {
         ref={fileInputRef} 
         onChange={handleFileChange} 
         accept="image/*" 
+        multiple
         className="hidden" 
       />
       <canvas ref={canvasRef} className="hidden" />
-
-      {/* Real-time Notifications Overlay */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none">
-        <AnimatePresence>
-          {notifications.map((notif) => (
-            <motion.div
-              key={notif.id}
-              initial={{ opacity: 0, x: 50, scale: 0.9 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 20, scale: 0.95 }}
-              className="pointer-events-auto bg-surface-high border border-surface-highest shadow-2xl rounded-xl p-4 flex items-center gap-4 min-w-[300px] max-w-md"
-            >
-              <div className={`p-2 rounded-lg ${
-                notif.type === 'success' ? 'bg-success/10 text-success' : 
-                notif.type === 'warning' ? 'bg-warning/10 text-warning' :
-                notif.type === 'error' ? 'bg-error/10 text-error' : 'bg-primary/10 text-primary'
-              }`}>
-                <Zap size={18} />
-              </div>
-              <div className="flex-1">
-                <p className="text-xs font-bold text-on-surface leading-tight">{notif.message}</p>
-                <p className="text-[10px] text-on-surface-variant mt-1 font-medium">
-                  {new Date(notif.timestamp).toLocaleTimeString()}
-                </p>
-              </div>
-              <button 
-                onClick={() => setNotifications(prev => prev.filter(n => n.id !== notif.id))}
-                className="text-on-surface-variant hover:text-on-surface transition-colors"
-              >
-                <Maximize2 size={14} className="rotate-45" />
-              </button>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
     </div>
   );
 }

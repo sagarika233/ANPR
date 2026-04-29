@@ -1,50 +1,110 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,FILL@0..1,GRAD@-25..100,opsz@20..48&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-headline: "Space Grotesk", sans-serif;
   
-  --color-surface: #0f172a;
-  --color-surface-low: #020617;
-  --color-surface-high: #1e293b;
-  --color-surface-highest: #334155;
-  
-  --color-primary: #3b82f6;
-  --color-primary-container: #1d4ed8;
-  
-  --color-secondary: #64748b;
-  --color-secondary-container: #475569;
-  
-  --color-tertiary: #0ea5e9;
-  
-  --color-error: #ef4444;
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  
-  --color-on-surface: #f8fafc;
-  --color-on-surface-variant: #94a3b8;
+  --color-primary: #005bbf;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #1a73e8;
+  --color-on-primary-container: #ffffff;
+  --color-primary-fixed: #d8e2ff;
+  --color-on-primary-fixed: #001a41;
+  --color-primary-fixed-dim: #adc7ff;
+  --color-on-primary-fixed-variant: #004493;
+
+  --color-secondary: #5b5f64;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #dde0e6;
+  --color-on-secondary-container: #5f6368;
+  --color-secondary-fixed: #dfe3e8;
+  --color-on-secondary-fixed: #181c20;
+  --color-secondary-fixed-dim: #c3c7cc;
+  --color-on-secondary-fixed-variant: #43474c;
+
+  --color-tertiary: #006d2c;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #008939;
+  --color-on-tertiary-container: #ffffff;
+  --color-tertiary-fixed: #89fa9b;
+  --color-on-tertiary-fixed: #002108;
+  --color-tertiary-fixed-dim: #6ddd81;
+  --color-on-tertiary-fixed-variant: #005320;
+
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+
+  --color-surface: #f8f9fa;
+  --color-on-surface: #191c1d;
+  --color-surface-variant: #e1e3e4;
+  --color-on-surface-variant: #414754;
+  --color-surface-dim: #d9dadb;
+  --color-surface-bright: #f8f9fa;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f3f4f5;
+  --color-surface-container: #edeeef;
+  --color-surface-container-high: #e7e8e9;
+  --color-surface-container-highest: #e1e3e4;
+
+  --color-outline: #727785;
+  --color-outline-variant: #c1c6d6;
+  --color-inverse-surface: #2e3132;
+  --color-inverse-on-surface: #f0f1f2;
+  --color-inverse-primary: #adc7ff;
+  --color-background: #f8f9fa;
+  --color-on-background: #191c1d;
+
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
 }
 
 @layer base {
   body {
-    @apply bg-surface-low text-on-surface font-sans antialiased;
+    @apply bg-surface text-on-surface font-sans antialiased;
   }
 }
 
 @layer components {
+  .signature-gradient {
+    background: linear-gradient(135deg, #004ac6 0%, #2170e4 100%);
+  }
+
   .glass-panel {
-    @apply bg-surface-high/50 backdrop-blur-md border border-white/5;
+    @apply bg-white/75 backdrop-blur-2xl border border-white/40 shadow-sm transition-all duration-300;
   }
-  
-  .card-shadow {
-    @apply shadow-[0_1px_3px_0_rgba(0,0,0,0.1),0_1px_2px_-1px_rgba(0,0,0,0.1)];
+
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    display: inline-block;
+    line-height: 1;
+    width: 1em;
+    height: 1em;
   }
-  
+
   .hud-bracket {
-    @apply absolute w-3 h-3 border-primary/40;
+    @apply absolute w-8 h-8 border-white/80;
   }
   .hud-bracket-tl { @apply top-0 left-0 border-t-2 border-l-2; }
   .hud-bracket-tr { @apply top-0 right-0 border-t-2 border-r-2; }
   .hud-bracket-bl { @apply bottom-0 left-0 border-b-2 border-l-2; }
   .hud-bracket-br { @apply bottom-0 right-0 border-b-2 border-r-2; }
+  
+  .card-shadow {
+    @apply shadow-[0px_12px_32px_rgba(25,28,29,0.04)];
+  }
+
+  .pulse-dot {
+    @apply relative inline-block w-2 h-2 bg-tertiary rounded-full;
+  }
+  .pulse-dot::after {
+    content: '';
+    @apply absolute inset-0 bg-tertiary rounded-full opacity-40 animate-ping;
+    transform: scale(2.5);
+  }
 }

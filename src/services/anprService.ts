@@ -1,85 +1,166 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { sharpenImage, enhanceContrast, resizeImage, binarizeImage } from "../utils/imageUtils";
+import { sharpenImage, enhanceContrast, resizeImage, calculateBlurScore, cannyEdgeDetection } from "../utils/imageUtils";
 
 export interface DetectionResult {
   plate: string;
   confidence: number;
+  status: 'Valid' | 'Low Confidence' | 'Blurry Image';
   make?: string;
   model?: string;
   vehicle_type?: string;
   bbox?: { x: number; y: number; width: number; height: number };
   is_blurry?: boolean;
   is_enhanced?: boolean;
+  image?: string;
+  // Registry details
+  owner_name?: string;
+  registration_date?: string;
+  fuel_type?: string;
+  engine_number?: string;
+  chassis_number?: string;
+  // Metadata
+  original_base64?: string;
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const detectPlate = async (base64Image: string, retryCount = 0): Promise<DetectionResult[] | null> => {
-  const MAX_RETRIES = 6;
-  const models = [
-    "gemini-3.1-flash-lite-preview", 
-    "gemini-3.1-pro-preview", 
-    "gemini-flash-latest", 
-    "gemini-3-flash-preview"
-  ];
+const hashString = (str: string) => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString();
+};
+
+const normalizePlate = (rawPlate: string): string => {
+  // 1. Basic cleanup: Remove junk and normalize case
+  let plate = rawPlate.replace(/[^A-Z0-9]/g, '').toUpperCase();
   
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-    
-    if (!process.env.GEMINI_API_KEY) {
-      console.error("ANPR Service: GEMINI_API_KEY is missing!");
-      return null;
+  // OCR Correction Maps: Specific to ANPR pitfalls
+  const L_TO_D: Record<string, string> = { 
+    'O': '0', 'I': '1', 'Z': '2', 'S': '5', 'B': '8', 
+    'G': '6', 'Q': '0', 'D': '0', 'T': '7', 'E': '3',
+    'A': '4', 'J': '7', 'L': '1', 'R': '2', 'K': '4',
+    'P': '9', 'U': '0', 'V': '0', 'Y': '4'
+  };
+  const D_TO_L: Record<string, string> = { 
+    '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '8': 'B',
+    '4': 'A', '6': 'G', '7': 'T', '3': 'E', '9': 'P'
+  };
+  
+  // Official Indian State Codes (HSRP compliant)
+  const stateCodes = ["AN", "AP", "AR", "AS", "BR", "CH", "CT", "DN", "DD", "DL", "GA", "GJ", "HR", "HP", "JK", "JH", "KA", "KL", "LA", "LD", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", "PB", "RJ", "SK", "TN", "TS", "TR", "UP", "UK", "WB"];
+
+  const correctCharacters = (str: string, map: Record<string, string>) => 
+    str.split('').map(char => map[char] || char).join('');
+
+  // Indian Standard: SS DD CC NNNN (e.g., MH 12 AB 1234)
+  if (plate.length >= 7) {
+    // Step 1: Standardize State (Must be Alpha)
+    let state = correctCharacters(plate.substring(0, 2), D_TO_L);
+    if (!stateCodes.includes(state)) {
+      // If still not valid, try a more aggressive alphabetic correction
+      state = state.split('').map(c => isNaN(Number(c)) ? c : D_TO_L[c] || 'X').join('');
     }
 
-    // Resize original image to manage payload size
-    const resizedOriginal = await resizeImage(base64Image, 600);
+    // Step 2: Standardize District (Must be Numeric)
+    let district = correctCharacters(plate.substring(2, 4), L_TO_D);
+
+    // Step 3: Handle Category and Unique Number
+    let tail = plate.substring(4);
     
-    // Create an enhanced version for better OCR on blurred images
-    const sharpened = await sharpenImage(resizedOriginal);
+    // Pattern: [Optional Category Alpha] + [Registration Number Digits]
+    // Common case: category 1-2 letters, number 1-4 digits
+    const match = tail.match(/^([A-Z0-9]+?)([0-9A-Z]{4})$/);
+    if (match) {
+      let category = match[1].split('').map(c => isNaN(Number(c)) ? c : D_TO_L[c] || c).join('');
+      let number = correctCharacters(match[2], L_TO_D);
+      return `${state} ${district} ${category} ${number}`.replace(/\s+/g, ' ').trim();
+    }
+    
+    // Fallback: If no clear category break, use standard spacing
+    let number = correctCharacters(tail.slice(-4), L_TO_D);
+    let category = tail.slice(0, -4).split('').map(c => isNaN(Number(c)) ? c : D_TO_L[c] || c).join('');
+    return `${state} ${district} ${category} ${number}`.replace(/\s+/g, ' ').trim();
+  }
+
+  return plate;
+};
+
+const detectionCache: Record<string, DetectionResult[]> = {};
+
+export const detectPlate = async (base64Image: string, retryCount = 0): Promise<DetectionResult[] | null> => {
+  const MAX_RETRIES = 6;
+  
+  const imageHash = hashString(base64Image);
+  if (detectionCache[imageHash] && retryCount === 0) {
+    console.log("ANPR: Returning cached consistent results for identical image.");
+    return detectionCache[imageHash];
+  }
+
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+
+  try {
+    const blurScore = await calculateBlurScore(base64Image);
+    const isImageBlurry = blurScore < 250; 
+    
+    // Manage payload size for browser stability
+    const resizedOriginal = await resizeImage(base64Image, 600);
+    const edgeDetected = await cannyEdgeDetection(resizedOriginal);
+    const sharpened = await sharpenImage(edgeDetected);
     const contrastEnhanced = await enhanceContrast(sharpened);
     
-    console.log(`ANPR Payload size (Original): ${Math.round(resizedOriginal.length / 1024)} KB`);
+    const cleanOrig = resizedOriginal.split(',')[1] || resizedOriginal;
+    const cleanEnhanced = contrastEnhanced.split(',')[1] || contrastEnhanced;
 
-    const modelToUse = models[retryCount % models.length];
+    console.log(`ANPR Blur Score: ${Math.round(blurScore)}, Payload: ${Math.round(resizedOriginal.length / 1024)} KB`);
 
     const response = await ai.models.generateContent({
-      model: modelToUse,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: "image/jpeg",
-              data: resizedOriginal.split(',')[1] || resizedOriginal,
+      model: "gemini-1.5-flash",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              inlineData: {
+                mimeType: "image/jpeg",
+                data: cleanOrig,
+              },
             },
-          },
-          {
-            inlineData: {
-              mimeType: "image/jpeg",
-              data: contrastEnhanced.split(',')[1] || contrastEnhanced,
+            {
+              inlineData: {
+                mimeType: "image/jpeg",
+                data: cleanEnhanced,
+              },
             },
-          },
-          {
-            text: `You are an advanced Multi-Vehicle ANPR and classification system. 
-            Identify EVERY vehicle and EVERY license plate in the image, scanning from background to foreground.
+            {
+              text: `You are an ELITE ultra-precision Multi-Vehicle ANPR and Classification Engine. 
             
-            VEHICLE SCOPE:
-            - Categories: Cars, SUVs, Hatchbacks, Sedans, Trucks (Light/Heavy), Buses, Motorcycles, Scooters, Three-Wheelers (Auto Rickshaws), Vans.
-            - Identification: For each vehicle, provide its type, brand (make), and specific model name.
+            STAGE 1: IMAGE SEGMENTATION & ROI ANALYSIS
+            - Perform sub-pixel scanning on the dual-exposure inputs provided (Original + High-Contrast).
+            - Identify all vehicles. A detection MUST have an ULTRA-TIGHT bounding box around the LICENSE PLATE TEXT only (crop precisely to the edges of the characters).
             
-            PLATE RECOGNITION (Handling Blur/Distance):
-            - Reconstruct blurred characters using logical font-shape analysis.
-            - Format for Indian Plates: [StateCode][DistrictCode][Series][Number].
-            - Even if barely visible, provide your most likely read with a confidence score.
+            STAGE 2: LICENSE PLATE RECOGNITION (LPR) & HEURISTICS
+            - TARGET: Indian Standard HSRP plates (White, Yellow, Green, Black).
+            - PATTERN: MH12AB1234, OD02BA9010, etc.
+            - STATUS ASSIGNMENT:
+                * 'Valid': Confidence > 0.85 and pattern matches exactly.
+                * 'Low Confidence': Confidence between 0.70 and 0.85, or pattern is borderline.
+                * 'Blurry Image': Input is objectively blurry or characters are smudged.
             
-            MULTIPLE DETECTIONS:
-            - If there are 5 vehicles, return 5 detection objects.
-            - Ensure bounding boxes accurately enclose the license plate area.
+            STAGE 3: VEHICLE INTELLIGENCE
+            - Identify Brand (Make), Model, and Category.
             
-            Return ONLY a valid JSON object with a 'detections' array.`,
-          },
-        ],
-      },
+            STRICT CONSTRAINTS:
+            - Return ONLY valid JSON with 'detections' array containing objects with: plate, confidence, status, make, model, vehicle_type, bbox (x, y, width, height), is_blurry.`,
+            },
+          ],
+        },
+      ],
       config: {
+        temperature: 0,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -91,6 +172,10 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
                 properties: {
                   plate: { type: Type.STRING },
                   confidence: { type: Type.NUMBER },
+                  status: {
+                    type: Type.STRING,
+                    description: "Status of detection: 'Valid', 'Low Confidence', or 'Blurry Image'",
+                  },
                   make: { type: Type.STRING },
                   model: { type: Type.STRING },
                   vehicle_type: { type: Type.STRING },
@@ -106,110 +191,129 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
                   },
                   is_blurry: { type: Type.BOOLEAN },
                 },
-                required: ["plate", "confidence", "vehicle_type"],
-              }
-            }
+                required: ["plate", "confidence", "status", "vehicle_type"],
+              },
+            },
           },
           required: ["detections"],
         },
       },
     });
 
-    const result = JSON.parse(response.text);
-    const detections: DetectionResult[] = result.detections || [];
-    
-    // Regex validation for Indian plates (Refined)
-    const indianPlatePattern = /^[A-Z]{2}[0-9]{1,2}[A-Z]{1,2}[0-9]{4}$/;
-    
-    // Common misidentifications in OCR
-    const ocrCorrections: Record<string, string> = {
-      '0': 'O', '1': 'I', '2': 'Z', '5': 'S', '8': 'B'
-    };
-    const reverseOcrCorrections: Record<string, string> = {
-      'O': '0', 'I': '1', 'Z': '2', 'S': '5', 'B': '8', 'G': '6', 'Q': '0'
-    };
+    const text = response.text || "";
+    const parsedData = JSON.parse(text);
+    let detections: DetectionResult[] = parsedData.detections || [];
 
+    if (isImageBlurry) {
+      detections = detections.map(d => ({
+        ...d,
+        status: d.status === 'Valid' ? 'Low Confidence' : d.status,
+        is_blurry: true
+      }));
+    }
+    
     detections.forEach(det => {
-      let plate = det.plate.replace(/[^A-Z0-9]/g, '').toUpperCase();
+      // Apply advanced position-aware OCR normalization
+      det.plate = normalizePlate(det.plate);
       
-      // Attempt heuristic reconstruction if it's close to Indian format but failing
-      // State code (first 2 chars) must be letters
-      if (plate.length >= 2) {
-        let state = plate.substring(0, 2);
-        state = state.split('').map(char => isNaN(Number(char)) ? char : ocrCorrections[char] || char).join('');
-        plate = state + plate.substring(2);
-      }
+      if (det.bbox) {
+        const centerX = det.bbox.x + det.bbox.width / 2;
+        const centerY = det.bbox.y + det.bbox.height / 2;
+        const isSquare = det.bbox.height / det.bbox.width > 0.5;
+        const targetRatio = isSquare ? 1.5 : 4.1;
+        
+        let finalWidth = det.bbox.width;
+        let finalHeight = det.bbox.width / targetRatio;
+        
+        if (Math.abs(finalHeight - det.bbox.height) > det.bbox.height * 0.4) {
+          finalHeight = det.bbox.height;
+          finalWidth = det.bbox.height * targetRatio;
+        }
 
-      // District code (chars 3-4) must be digits
-      if (plate.length >= 4) {
-        let district = plate.substring(2, 4);
-        const originalDistrict = district;
-        district = district.split('').map(char => isNaN(Number(char)) ? reverseOcrCorrections[char] || char : char).join('');
-        if (district !== originalDistrict) det.is_enhanced = true;
-        plate = plate.substring(0, 2) + district + plate.substring(4);
-      }
-      
-      det.plate = plate;
-      
-      if (indianPlatePattern.test(plate)) {
-        det.confidence = Math.min(det.confidence + 0.15, 1.0);
-        det.is_enhanced = true;
+        det.bbox = {
+          x: centerX - finalWidth / 2,
+          y: centerY - finalHeight / 2,
+          width: finalWidth,
+          height: finalHeight
+        };
       }
     });
 
-    return detections;
+    const uniqueDetections: DetectionResult[] = [];
+    const seenPlates = new Set<string>();
+
+    const sortedDetections = [...detections]
+      .filter(d => d.confidence >= 0.85 || d.status === 'Low Confidence' || d.status === 'Blurry Image')
+      .sort((a, b) => b.confidence - a.confidence);
+
+    for (const det of sortedDetections) {
+      const plate = det.plate;
+      if (seenPlates.has(plate)) continue;
+
+      let isDuplicateSpatial = false;
+      if (det.bbox) {
+        for (const existing of uniqueDetections) {
+          if (existing.bbox) {
+            const x1 = Math.max(det.bbox.x, existing.bbox.x);
+            const y1 = Math.max(det.bbox.y, existing.bbox.y);
+            const x2 = Math.min(det.bbox.x + det.bbox.width, existing.bbox.x + existing.bbox.width);
+            const y2 = Math.min(det.bbox.y + det.bbox.height, existing.bbox.y + existing.bbox.height);
+            
+            const intersectionArea = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+            const area1 = det.bbox.width * det.bbox.height;
+            const area2 = existing.bbox.width * existing.bbox.height;
+            const unionArea = area1 + area2 - intersectionArea;
+            const iou = intersectionArea / unionArea;
+
+            if (iou > 0.5) {
+              isDuplicateSpatial = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!isDuplicateSpatial) {
+        uniqueDetections.push(det);
+        seenPlates.add(plate);
+      }
+    }
+
+    if (uniqueDetections.length > 0) {
+      detectionCache[imageHash] = uniqueDetections;
+    }
+
+    return uniqueDetections;
   } catch (error: any) {
     console.error(`ANPR Detection Error (Attempt ${retryCount + 1}):`, error);
 
-    // Handle 429 (Quota Exceeded), 503 (High Demand), network failures, or other transient errors
     const errorMessage = error?.message || String(error);
-    const isQuotaExceeded = error?.status === "RESOURCE_EXHAUSTED" || error?.code === 429 || errorMessage.includes("Quota exceeded");
+    const isQuotaExceeded = errorMessage.includes("Quota exceeded") || errorMessage.includes("QUOTA_EXCEEDED") || error?.status === "RESOURCE_EXHAUSTED";
+    
+    if (isQuotaExceeded) {
+      console.warn("ANPR: Quota exceeded. Halting retries.");
+      throw new Error("QUOTA_EXCEEDED");
+    }
+
     const isTransientError = 
-      isQuotaExceeded ||
-      error?.status === "UNAVAILABLE" || 
-      error?.code === 503 || 
-      errorMessage.includes("high demand") ||
       errorMessage.includes("Failed to fetch") ||
-      errorMessage.includes("NetworkError");
+      errorMessage.includes("NetworkError") ||
+      errorMessage.includes("high demand") ||
+      errorMessage.includes("UNAVAILABLE") ||
+      error?.status === "UNAVAILABLE" ||
+      error?.code === 503;
     
     if (isTransientError && retryCount < MAX_RETRIES) {
-      // Respect retry delay from API if provided, otherwise use exponential backoff
       let waitTime = Math.pow(2, retryCount) * 2000 + Math.random() * 1000;
-      
-      // Try to parse retryDelay from the error details if available
-      try {
-        const errorData = typeof error.message === 'string' ? JSON.parse(error.message) : error;
-        const retryDelay = errorData?.error?.details?.find((d: any) => d['@type']?.includes('RetryInfo'))?.retryDelay;
-        if (retryDelay) {
-          const seconds = parseInt(retryDelay.replace('s', ''));
-          if (!isNaN(seconds)) {
-            waitTime = (seconds + 1) * 1000;
-          }
-        }
-      } catch (e) {
-        // Fallback to default wait time
-      }
-
-      if (isQuotaExceeded) {
-        console.warn("Gemini API Quota Exceeded. Slowing down...");
-        // If we don't have a specific delay, wait at least 30s
-        waitTime = Math.max(waitTime, 30000); 
-      }
-
-      if (errorMessage.includes("Failed to fetch")) {
-        console.warn("Network error detected. Retrying with longer delay...");
-        waitTime = Math.max(waitTime, 5000); // Wait at least 5s for network issues
-      }
+      if (isQuotaExceeded) waitTime = Math.max(waitTime, 30000); 
+      if (errorMessage.includes("Failed to fetch")) waitTime = Math.max(waitTime, 5000);
 
       console.log(`Retrying in ${Math.round(waitTime)}ms...`);
       await sleep(waitTime);
       return detectPlate(base64Image, retryCount + 1);
     }
 
-    if (isQuotaExceeded) {
-      throw new Error("QUOTA_EXCEEDED");
-    }
-
+    if (isQuotaExceeded) throw new Error("QUOTA_EXCEEDED");
     return null;
   }
 };

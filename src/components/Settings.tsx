@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   Lock,
   Eye,
+  Filter,
   Smartphone,
   Globe,
   AlertCircle
@@ -42,9 +43,9 @@ export default function Settings() {
   const sections = [
     {
       id: 'detection',
-      title: 'Recognition Engine',
+      title: 'Plate Detection',
       icon: Cpu,
-      description: 'Fine-tune the ANPR core parameters and sensitivity.',
+      description: 'Adjust how the system detects and reads number plates.',
       controls: [
         {
           label: 'Confidence Threshold',
@@ -95,6 +96,41 @@ export default function Settings() {
       ]
     },
     {
+      id: 'processing',
+      title: 'Advanced Processing',
+      icon: Filter,
+      description: 'Configure intelligent image enhancement and multi-sensor behavior.',
+      controls: [
+        {
+          label: 'Multi-Camera Mode',
+          description: 'Aggregate all available video inputs into a unified grid.',
+          type: 'toggle',
+          value: localSettings.multiCameraEnabled,
+          onChange: (val: boolean) => setLocalSettings(prev => ({ ...prev, multiCameraEnabled: val }))
+        },
+        {
+          label: 'Edge Sharpening',
+          description: 'Apply high-pass filter to clarify license plate characters.',
+          type: 'toggle',
+          value: localSettings.imageFilters.sharpen,
+          onChange: (val: boolean) => setLocalSettings(prev => ({ 
+            ...prev, 
+            imageFilters: { ...prev.imageFilters, sharpen: val } 
+          }))
+        },
+        {
+          label: 'Noise Reduction',
+          description: 'Use median filtering to stabilize low-light grainy feeds.',
+          type: 'toggle',
+          value: localSettings.imageFilters.noiseReduction,
+          onChange: (val: boolean) => setLocalSettings(prev => ({ 
+            ...prev, 
+            imageFilters: { ...prev.imageFilters, noiseReduction: val } 
+          }))
+        }
+      ]
+    },
+    {
       id: 'security',
       title: 'Security & Access',
       icon: Shield,
@@ -119,77 +155,79 @@ export default function Settings() {
   ];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-12">
+    <div className="max-w-4xl mx-auto space-y-8 pb-20">
       <AnimatePresence>
         {showSuccess && (
           <motion.div 
             initial={{ opacity: 0, y: -20, x: '-50%' }}
             animate={{ opacity: 1, y: 0, x: '-50%' }}
             exit={{ opacity: 0, y: -20, x: '-50%' }}
-            className="fixed top-24 left-1/2 z-50 bg-success text-white px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 border border-white/10"
+            className="fixed top-24 left-1/2 z-50 bg-tertiary text-white px-8 py-4 rounded-2xl shadow-[0px_16px_48px_rgba(25,28,29,0.2)] flex items-center gap-4 border border-white/10"
           >
-            <CheckCircle2 size={20} />
-            <span className="font-bold text-sm">Configuration saved successfully</span>
+            <div className="bg-white/20 p-1.5 rounded-lg">
+              <CheckCircle2 size={18} />
+            </div>
+            <span className="font-black text-xs uppercase tracking-widest">Settings Saved</span>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 px-2">
         <div>
-          <p className="text-primary font-bold uppercase tracking-[0.2em] text-[10px] mb-1">System Control</p>
-          <h1 className="text-3xl font-black tracking-tight text-on-surface">Settings</h1>
+          <p className="text-primary font-black uppercase tracking-[0.2em] text-[10px] mb-2">Manage Settings</p>
+          <h1 className="text-4xl font-black tracking-tighter text-on-surface">System Configuration</h1>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-4">
           <button 
             onClick={handleReset}
-            className="bg-surface border border-surface-highest hover:bg-surface-high transition-colors text-on-surface px-4 py-2 rounded-xl flex items-center gap-2 text-xs font-bold"
+            className="bg-surface-container-lowest border border-outline-variant/30 hover:bg-surface-container-high transition-all text-secondary px-6 py-3 rounded-xl flex items-center gap-3 text-[10px] font-black uppercase tracking-widest"
           >
-            <RefreshCw size={14} />
-            Reset
+            <RefreshCw size={16} />
+            Factory Reset
           </button>
           <button 
             onClick={handleApply}
-            className="bg-primary text-white px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-primary-container transition-all shadow-lg shadow-primary/20 flex items-center gap-2"
+            className="bg-on-surface text-surface px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] hover:opacity-90 transition-all shadow-xl active:scale-95 flex items-center gap-3"
           >
-            <Zap size={14} />
-            Save Changes
+            <Zap size={16} className="text-primary" />
+            Save Settings
           </button>
         </div>
       </header>
 
-      <div className="grid grid-cols-1 gap-6">
+      <div className="space-y-6">
         {sections.map((section, i) => (
           <motion.section 
             key={section.id}
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-sm"
+            className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl overflow-hidden shadow-sm card-shadow"
           >
-            <div className="p-6 border-b border-surface-highest bg-surface-low/50 flex items-start gap-4">
-              <div className="p-3 rounded-xl bg-surface border border-surface-highest text-primary">
-                <section.icon size={24} />
+            <div className="p-8 border-b border-outline-variant/10 bg-surface-container-low/30 flex items-start gap-6">
+              <div className="p-4 rounded-2xl bg-surface-container-lowest border border-outline-variant/10 text-primary shadow-sm rotate-3 group-hover:rotate-0 transition-transform">
+                <section.icon size={28} />
               </div>
               <div>
-                <h2 className="text-sm font-bold text-on-surface uppercase tracking-widest">{section.title}</h2>
-                <p className="text-xs text-on-surface-variant mt-1">{section.description}</p>
+                <h2 className="text-xs font-black text-on-surface uppercase tracking-[0.2em]">{section.title}</h2>
+                <p className="text-[11px] text-on-surface-variant font-medium mt-1.5 leading-relaxed max-w-lg">{section.description}</p>
               </div>
             </div>
 
-            <div className="divide-y divide-surface-highest">
+            <div className="divide-y divide-outline-variant/5">
               {section.controls.map((control, idx) => (
-                <div key={idx} className="p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 hover:bg-surface-low/30 transition-colors">
+                <div key={idx} className="p-8 flex flex-col md:flex-row md:items-center justify-between gap-8 hover:bg-surface-container-low/20 transition-colors">
                   <div className="max-w-md">
-                    <h3 className="text-sm font-bold text-on-surface">{control.label}</h3>
-                    <p className="text-xs text-on-surface-variant mt-1">{control.description}</p>
+                    <h3 className="text-sm font-black text-on-surface uppercase tracking-tight">{control.label}</h3>
+                    <p className="text-[11px] text-on-surface-variant font-bold mt-1.5 opacity-60 leading-relaxed">{control.description}</p>
                   </div>
                   
-                  <div className="flex items-center gap-6 min-w-[240px] justify-end">
+                  <div className="flex items-center gap-8 min-w-[280px] justify-end">
                     {control.type === 'range' ? (
-                      <div className="w-full space-y-3">
-                        <div className="flex justify-between text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">
-                          <span>Sensitivity</span>
-                          <span className="text-primary">{control.value}{control.unit}</span>
+                      <div className="w-full space-y-4">
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] font-black text-outline uppercase tracking-widest">Target Sensitivity</span>
+                          <span className="text-sm font-black text-primary font-mono">{control.value}{control.unit}</span>
                         </div>
                         <input 
                           type="range"
@@ -197,18 +235,18 @@ export default function Settings() {
                           max={control.max}
                           value={control.value as number}
                           onChange={(e) => control.onChange?.(parseInt(e.target.value))}
-                          className="w-full h-1.5 bg-surface-low rounded-full appearance-none cursor-pointer accent-primary"
+                          className="w-full h-2 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary shadow-inner"
                         />
                       </div>
                     ) : (
                       <button 
                         disabled={control.disabled}
                         onClick={() => control.onChange?.(!(control.value as boolean))}
-                        className={`w-12 h-6 rounded-full relative transition-all flex items-center ${control.disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'} ${control.value ? 'bg-primary' : 'bg-surface-highest'}`}
+                        className={`w-14 h-7 rounded-full relative transition-all flex items-center p-1 ${control.disabled ? 'opacity-30 cursor-not-allowed grayscale' : 'cursor-pointer'} ${control.value ? 'bg-primary' : 'bg-surface-container-highest shadow-inner'}`}
                       >
                         <motion.div 
-                          animate={{ x: control.value ? 26 : 4 }}
-                          className="w-4 h-4 bg-white rounded-full shadow-sm"
+                          animate={{ x: control.value ? 28 : 0 }}
+                          className="w-5 h-5 bg-white rounded-full shadow-lg"
                         />
                       </button>
                     )}
@@ -221,20 +259,21 @@ export default function Settings() {
       </div>
 
       {/* Danger Zone */}
-      <section className="bg-error/5 border border-error/20 rounded-2xl p-6">
-        <div className="flex items-start gap-4">
-          <div className="p-3 rounded-xl bg-error/10 text-error">
-            <AlertCircle size={24} />
+      <section className="bg-error-container/5 border border-error/20 rounded-2xl p-8 relative overflow-hidden group">
+        <div className="absolute -top-12 -right-12 w-48 h-48 bg-error/5 rounded-full group-hover:scale-150 transition-transform duration-700 blur-3xl"></div>
+        <div className="flex items-start gap-6 relative z-10">
+          <div className="p-4 rounded-2xl bg-error-container text-error shadow-lg shadow-error/10">
+            <AlertCircle size={28} />
           </div>
           <div className="flex-1">
-            <h2 className="text-sm font-bold text-error uppercase tracking-widest">Danger Zone</h2>
-            <p className="text-xs text-on-surface-variant mt-1">Irreversible actions that affect system data.</p>
-            <div className="mt-6 flex flex-wrap gap-4">
-              <button className="px-4 py-2 bg-error/10 hover:bg-error/20 text-error rounded-xl text-xs font-bold transition-all border border-error/20">
-                Purge Detection History
+            <h2 className="text-xs font-black text-error uppercase tracking-[0.2em]">Restricted Access Area</h2>
+            <p className="text-[11px] text-on-surface-variant font-bold mt-1.5 opacity-60">Important system maintenance and delete options.</p>
+            <div className="mt-8 flex flex-wrap gap-4">
+              <button className="px-6 py-2.5 bg-error/10 hover:bg-error text-error hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-error/20 shadow-sm active:scale-95">
+                Purge Data Lake
               </button>
-              <button className="px-4 py-2 bg-error/10 hover:bg-error/20 text-error rounded-xl text-xs font-bold transition-all border border-error/20">
-                Reset System Credentials
+              <button className="px-6 py-2.5 bg-error/10 hover:bg-error text-error hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border border-error/20 shadow-sm active:scale-95">
+                Reset Node Credentials
               </button>
             </div>
           </div>

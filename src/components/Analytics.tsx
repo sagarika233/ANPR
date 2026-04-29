@@ -157,7 +157,7 @@ export default function Analytics() {
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>
-          <p className="text-primary font-bold uppercase tracking-[0.2em] text-[10px] mb-1">Intelligence Hub</p>
+          <p className="text-primary font-bold uppercase tracking-[0.2em] text-[10px] mb-1">Data Overview</p>
           <h1 className="text-3xl font-black tracking-tight text-on-surface">Analytics Dashboard</h1>
         </div>
         <div className="flex gap-3">
@@ -235,7 +235,7 @@ export default function Analytics() {
                 </span>
               </div>
               <p className="text-4xl font-black text-on-surface mb-1">
-                {isLoading ? '...' : stat.value.toLocaleString()}
+                {isLoading ? '...' : (stat.value ?? 0).toLocaleString()}
               </p>
               <p className="text-xs text-on-surface-variant font-bold uppercase tracking-widest">{stat.label}</p>
             </div>

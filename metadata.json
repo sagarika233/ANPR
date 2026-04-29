@@ -1,5 +1,5 @@
 {
-  "name": "Sentinel AI - ANPR Control Center",
-  "description": "A high-end Automatic Number Plate Recognition (ANPR) control center with real-time detection, analytics, and historical search.",
+  "name": "Vigilant ALPR - Smart Security Suite",
+  "description": "Smart security system that recognizes vehicle number plates in real-time, checks vehicle details, and provides high-accuracy monitoring.",
   "requestFramePermissions": ["camera"]
 }

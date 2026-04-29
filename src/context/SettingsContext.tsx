@@ -1,10 +1,30 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 
+interface CameraPreset {
+  id: string;
+  name: string;
+  zoom?: number;
+  focusMode?: string;
+  exposureMode?: string;
+}
+
+interface ImageFilters {
+  sharpen: boolean;
+  enhanceContrast: boolean;
+  noiseReduction: boolean;
+  adaptiveThreshold: boolean;
+  binarize: boolean;
+}
+
 interface Settings {
   confidenceThreshold: number;
   watchlistAlerts: boolean;
   systemUpdates: boolean;
   audibleAlerts: boolean;
+  imageFilters: ImageFilters;
+  cameraPresets: CameraPreset[];
+  viewLayout: 'single' | 'grid';
+  multiCameraEnabled: boolean;
 }
 
 interface SettingsContextType {
@@ -18,6 +38,19 @@ const DEFAULT_SETTINGS: Settings = {
   watchlistAlerts: true,
   systemUpdates: true,
   audibleAlerts: false,
+  imageFilters: {
+    sharpen: true,
+    enhanceContrast: true,
+    noiseReduction: false,
+    adaptiveThreshold: false,
+    binarize: false,
+  },
+  cameraPresets: [
+    { id: '1', name: 'Standard Wide', zoom: 1 },
+    { id: '2', name: 'Close Range', zoom: 2.5 },
+  ],
+  viewLayout: 'single',
+  multiCameraEnabled: false,
 };
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
