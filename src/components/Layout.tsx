@@ -89,18 +89,18 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
 
   const SidebarContent = () => (
     <>
-      <div className="px-8 mb-10 flex items-center justify-between">
+      <div className="px-6 mb-4 sm:mb-8 flex items-center justify-between">
         <div>
           <h2 className="text-xl font-black tracking-tighter text-on-surface font-headline uppercase leading-none">
             Vigilant <span className="text-primary group-hover:text-primary-container transition-colors">ALPR</span>
           </h2>
-          <p className="text-[10px] font-bold text-outline uppercase tracking-[0.3em] mt-2 text-on-surface-variant/60">Smart Plate System</p>
+          <p className="text-[9px] font-bold text-outline uppercase tracking-[0.3em] mt-1.5 text-on-surface-variant/60">Smart Plate System</p>
         </div>
         <button className="md:hidden p-2 hover:bg-surface-container rounded-full" onClick={() => setIsSidebarOpen(false)}>
           <X size={20} className="text-on-surface-variant" />
         </button>
       </div>
-      <nav className="flex-1 px-4 space-y-1">
+      <nav className="flex-1 px-3 space-y-0.5">
         {navItems.map((item) => (
           <button
             key={item.id}
@@ -108,7 +108,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
               setActiveTab(item.id);
               setIsSidebarOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-6 py-3.5 rounded-2xl transition-all duration-300 group ${
+            className={`w-full flex items-center gap-3 px-5 py-2.5 rounded-xl transition-all duration-300 group ${
               activeTab === item.id 
                 ? 'text-primary bg-primary/10 shadow-sm border border-primary/10' 
                 : 'text-secondary hover:text-on-surface hover:bg-surface-container-high/40'
@@ -118,16 +118,16 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
               size={18} 
               className={activeTab === item.id ? 'text-primary animate-pulse-slow' : 'text-secondary group-hover:text-on-surface transition-colors'} 
             />
-            <span className="font-headline text-[11px] uppercase tracking-[0.12em] font-bold">
+            <span className="font-headline text-[10px] uppercase tracking-[0.1em] font-bold">
               {item.label}
             </span>
           </button>
         ))}
       </nav>
-      <div className="px-6 py-6 mt-auto">
-        <div className="flex items-center gap-2 px-3 py-2 bg-tertiary-container/10 rounded-lg border border-tertiary/10">
+      <div className="px-5 py-4 mt-auto">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-tertiary-container/10 rounded-lg border border-tertiary/10">
           <div className="pulse-dot"></div>
-          <span className="text-[10px] font-bold text-tertiary tracking-wider uppercase">System Secured</span>
+          <span className="text-[9px] font-bold text-tertiary tracking-wider uppercase">System Secured</span>
         </div>
       </div>
     </>
@@ -167,28 +167,28 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
       {/* Main Content Area */}
       <main className="md:ml-64 flex-1 flex flex-col min-h-screen relative transition-all duration-300">
         {/* TopAppBar */}
-        <header className="sticky top-0 z-50 w-full bg-surface-container-lowest/80 backdrop-blur-2xl border-b border-outline-variant/5 flex items-center justify-between px-4 sm:px-8 h-18">
+        <header className="sticky top-0 z-50 w-full bg-surface-container-lowest/80 backdrop-blur-2xl border-b border-outline-variant/5 flex items-center justify-between px-4 sm:px-8 h-14 sm:h-16">
           <div className="flex items-center gap-3 shrink-0 min-w-0">
             <button 
-              className="md:hidden p-2.5 bg-surface-container-high/50 hover:bg-surface-container rounded-xl transition-all active:scale-95"
+              className="md:hidden p-2 bg-surface-container-high/50 hover:bg-surface-container rounded-xl transition-all active:scale-95"
               onClick={() => setIsSidebarOpen(true)}
             >
-              <Menu size={20} className="text-on-surface" />
+              <Menu size={18} className="text-on-surface" />
             </button>
             <div className="flex items-baseline gap-3 min-w-0 overflow-hidden">
-              <h1 className="text-lg sm:text-xl font-black tracking-tighter text-on-surface font-headline leading-none truncate">
+              <h1 className="text-base sm:text-lg font-black tracking-tighter text-on-surface font-headline leading-none truncate">
                 {navItems.find(i => i.id === activeTab)?.label || 'Vigilant'}
               </h1>
             </div>
           </div>
 
-          <div className="flex-1 max-w-md mx-8 hidden lg:block">
+          <div className="flex-1 max-w-md mx-6 hidden lg:block">
             <div className="relative group/search">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within/search:text-primary transition-colors" size={18} />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within/search:text-primary transition-colors" size={16} />
               <input 
                 type="text" 
                 placeholder="Query database..." 
-                className="w-full bg-surface-container-high/40 border border-transparent focus:border-primary/20 focus:bg-surface-container-high text-sm py-2.5 pl-11 pr-4 rounded-2xl transition-all placeholder:text-on-surface-variant/40"
+                className="w-full bg-surface-container-high/30 border border-transparent focus:border-primary/20 focus:bg-surface-container-high text-xs py-2 pl-10 pr-4 rounded-xl transition-all placeholder:text-on-surface-variant/40"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleNewSearch(e)}
@@ -196,29 +196,29 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4 ml-auto">
+          <div className="flex items-center gap-2 sm:gap-3 ml-auto">
             <button 
               onClick={() => setShowNewSearch(true)}
-              className="lg:hidden p-2.5 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant active:scale-95"
+              className="lg:hidden p-2 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant active:scale-95"
             >
-              <Search size={20} />
+              <Search size={18} />
             </button>
             
             <button 
               onClick={handleToggleNotifications}
-              className="p-2.5 bg-surface-container-high/30 hover:bg-surface-container rounded-xl transition-all relative active:scale-95"
+              className="p-2 bg-surface-container-high/30 hover:bg-surface-container rounded-xl transition-all relative active:scale-95"
             >
-              <Bell size={20} className={hasUnread ? "text-primary fill-primary/10" : "text-on-surface-variant"} />
+              <Bell size={18} className={hasUnread ? "text-primary fill-primary/10" : "text-on-surface-variant"} />
               {hasUnread && (
-                <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-error rounded-full border-2 border-surface-container-lowest animate-pulse"></span>
+                <span className="absolute top-2 right-2 w-2 h-2 bg-error rounded-full border-2 border-surface-container-lowest animate-pulse"></span>
               )}
             </button>
 
-            <div className="h-8 w-px bg-outline-variant/10 mx-1 hidden sm:block" />
+            <div className="h-6 w-px bg-outline-variant/10 mx-1 hidden sm:block" />
             
             <button className="hidden sm:flex items-center gap-3 pl-2 pr-1 py-1 rounded-full hover:bg-surface-container transition-all group">
-              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary border border-primary/20 overflow-hidden shadow-inner font-bold text-sm">
-                <User size={18} />
+              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary border border-primary/20 overflow-hidden shadow-inner font-bold text-xs">
+                <User size={16} />
               </div>
             </button>
           </div>
@@ -268,7 +268,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
         </header>
 
         {/* Scrollable Content */}
-        <div className="p-4 md:p-8 space-y-8 max-w-7xl mx-auto w-full flex-1">
+        <div className="p-4 md:p-8 space-y-6 sm:space-y-8 max-w-7xl mx-auto w-full flex-1">
           {children}
         </div>
 

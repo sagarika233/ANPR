@@ -691,9 +691,9 @@ export default function LiveView() {
   };
 
   return (
-    <div className="space-y-8 pb-32 md:pb-12 px-1">
+    <div className="space-y-6 pb-24 md:pb-12 px-1">
       {/* Analytics Overview */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         {[
           { 
             label: "Scans", 
@@ -742,9 +742,9 @@ export default function LiveView() {
             animate={{ opacity: 1, y: 0 }}
             whileHover={{ scale: 1.02 }}
             transition={{ delay: i * 0.1, duration: 0.2 }}
-            className={`p-4 sm:p-6 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text}`}
+            className={`p-3.5 sm:p-5 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text}`}
           >
-            <div className="flex justify-between items-start mb-3 sm:mb-4 relative z-10">
+            <div className="flex justify-between items-start mb-2 sm:mb-4 relative z-10">
               <div className={`p-2 sm:p-3 rounded-xl ${stat.iconBg} ${stat.iconColor} transition-transform group-hover:rotate-12`}>
                 <stat.icon size={18} className="sm:w-5 sm:h-5" />
               </div>
@@ -760,12 +760,12 @@ export default function LiveView() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 sm:gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 sm:gap-8">
         {/* Main Monitor Section */}
-        <div className="xl:col-span-3 space-y-6 sm:space-y-8">
+        <div className="xl:col-span-3 space-y-4 sm:space-y-6">
           <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl sm:rounded-3xl overflow-hidden shadow-md relative group">
             {/* Header */}
-            <div className="px-5 sm:px-10 py-4 sm:py-6 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-4 sm:gap-0">
+            <div className="px-4 sm:px-8 py-3 sm:py-5 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-3 sm:gap-0">
               <div className="flex flex-wrap items-center gap-3 sm:gap-5 min-w-0">
                 <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isDetecting ? 'bg-primary animate-pulse' : 'bg-outline-variant'}`}></div>
                 <h3 className="text-xs sm:text-lg font-black text-on-surface tracking-tighter uppercase whitespace-nowrap overflow-hidden text-ellipsis">SURV-ALPHA-NOD</h3>
@@ -1106,15 +1106,15 @@ export default function LiveView() {
             </div>
 
             {/* Primary Actions */}
-            <div className="px-6 sm:px-10 py-6 sm:py-8 border-t border-outline-variant/10 bg-surface-container-lowest relative z-20">
+            <div className="px-4 sm:px-8 py-4 sm:py-6 border-t border-outline-variant/10 bg-surface-container-lowest relative z-20">
               {/* Lens & Preset Control - Adjusted for mobile */}
               <AnimatePresence>
                 {isDetecting && (
                   <motion.div 
                     initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    animate={{ opacity: 1, height: 'auto', marginBottom: 24 }}
+                    animate={{ opacity: 1, height: 'auto', marginBottom: 16 }}
                     exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    className="space-y-6 sm:space-y-0 sm:flex sm:items-center sm:gap-10 overflow-hidden"
+                    className="space-y-4 sm:space-y-0 sm:flex sm:items-center sm:gap-10 overflow-hidden"
                   >
                     <div className="flex-1 w-full space-y-4">
                       <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
@@ -1220,7 +1220,7 @@ export default function LiveView() {
         </div>
 
         {/* Sidebar: Recent Detections */}
-        <div className="space-y-8">
+        <div className="space-y-4 sm:space-y-6">
           {/* Batch Processing Queue */}
           {uploadQueue.length > 0 && (
             <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col max-h-[300px] overflow-hidden">
@@ -1290,18 +1290,18 @@ export default function LiveView() {
             </div>
           )}
 
-          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col h-[calc(100vh-280px)] lg:h-[700px] overflow-hidden">
-            <div className="p-6 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col h-[calc(100vh-280px)] lg:h-[650px] overflow-hidden">
+            <div className="px-4 py-3 sm:px-5 sm:py-4 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface leading-none mb-1">Recent Detections</h3>
-                <p className="text-[9px] text-on-surface-variant font-medium uppercase tracking-tight opacity-60">Real-time processing stream</p>
+                <h3 className="text-xs sm:text-sm font-bold uppercase tracking-widest text-on-surface leading-none mb-0.5">Recent Detections</h3>
+                <p className="text-[8px] sm:text-[9px] text-on-surface-variant font-medium uppercase tracking-tight opacity-60">Real-time stream</p>
               </div>
               <div className="flex items-center gap-2">
                 <Activity size={16} className="text-blue-600 animate-pulse" />
               </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 custom-scrollbar">
               {liveDetections.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
                   <Database size={40} className="mb-4 text-slate-300" />
@@ -1313,13 +1313,13 @@ export default function LiveView() {
                       key={det.id || i}
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
-                      className={`p-4 bg-surface-container-lowest border border-outline-variant/5 rounded-2xl hover:bg-surface-container-low hover:scale-[1.01] transition-all cursor-pointer group shadow-sm ${
+                      className={`p-3 sm:p-4 bg-surface-container-lowest border border-outline-variant/5 rounded-2xl hover:bg-surface-container-low hover:scale-[1.01] transition-all cursor-pointer group shadow-sm ${
                         det.status === 'Valid' ? 'border-l-4 border-l-primary' : 
                         det.status === 'Low Confidence' ? 'border-l-4 border-l-amber-500' : 
                         'border-l-4 border-l-error'
                       }`}
                     >
-                      <div className="flex justify-between items-start mb-3">
+                      <div className="flex justify-between items-start mb-2 sm:mb-3">
                         <span className={`text-lg font-bold tracking-widest group-hover:text-primary transition-colors flex items-center gap-2 font-headline leading-none ${
                           det.status === 'Valid' ? 'text-on-surface' :
                           det.status === 'Low Confidence' ? 'text-amber-700' :
@@ -1370,7 +1370,7 @@ export default function LiveView() {
             
             <button 
               onClick={() => window.dispatchEvent(new CustomEvent('changeTab', { detail: 'history' }))}
-              className="p-5 text-[10px] font-black text-primary uppercase tracking-[0.2em] border-t border-outline-variant/10 hover:bg-surface-container-low transition-all bg-surface-container-lowest"
+              className="p-3.5 sm:p-4 text-[9px] sm:text-[10px] font-black text-primary uppercase tracking-[0.2em] border-t border-outline-variant/10 hover:bg-surface-container-low transition-all bg-surface-container-lowest"
             >
               View Full History
             </button>
@@ -1379,13 +1379,13 @@ export default function LiveView() {
       </div>
 
       {/* Full-width System Logs Table Section */}
-      <section className="bg-surface-container-lowest rounded-2xl shadow-md border border-outline-variant/5 overflow-hidden mt-8">
-        <div className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/10">
+      <section className="bg-surface-container-lowest rounded-2xl shadow-md border border-outline-variant/5 overflow-hidden mt-6">
+        <div className="px-4 py-4 sm:px-6 sm:py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/10">
           <div>
-            <h3 className="text-lg font-bold text-on-surface">System Logs</h3>
-            <p className="text-xs text-on-surface-variant font-medium mt-1">History of scanned plates</p>
+            <h3 className="text-base sm:text-lg font-bold text-on-surface">System Logs</h3>
+            <p className="text-[10px] sm:text-xs text-on-surface-variant font-medium mt-0.5">History of scanned plates</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex gap-2 sm:gap-3">
             <button 
               onClick={() => {
                 const doc = new jsPDF();
@@ -1440,20 +1440,20 @@ export default function LiveView() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-surface-container-low/50">
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden md:table-cell">Record ID</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Vehicle Details</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">License Plate</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden lg:table-cell">Region</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden sm:table-cell">Confidence</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Status</th>
+                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden md:table-cell">Record ID</th>
+                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Vehicle Details</th>
+                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">License Plate</th>
+                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden lg:table-cell">Region</th>
+                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden sm:table-cell">Confidence</th>
+                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant/5">
               {liveDetections.length > 0 ? (
                 liveDetections.map((row, i) => (
                   <tr key={row.id || i} className="hover:bg-surface-container-low transition-colors group">
-                    <td className="px-6 py-4 text-[11px] font-mono font-bold text-on-surface-variant hidden md:table-cell selection:bg-primary selection:text-white">#{String(row.id || '').slice(-6).toUpperCase() || 'UNKSYS'}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">
+                    <td className="px-4 py-3 sm:px-6 sm:py-4 text-[11px] font-mono font-bold text-on-surface-variant hidden md:table-cell selection:bg-primary selection:text-white">#{String(row.id || '').slice(-6).toUpperCase() || 'UNKSYS'}</td>
+                    <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-7 sm:w-12 sm:h-8 bg-black rounded border border-outline-variant/10 overflow-hidden shrink-0">
                           {row.image_url || row.image ? (
@@ -1470,13 +1470,13 @@ export default function LiveView() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3 sm:px-6 sm:py-4">
                       <span className="inline-block px-2 sm:px-3 py-1 bg-on-surface text-surface rounded sm:rounded-lg font-headline font-black text-[11px] sm:text-sm tracking-widest shadow-sm">
                         {row.plate}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase hidden lg:table-cell">{row.location || 'Entrance A'}</td>
-                    <td className="px-6 py-4 hidden sm:table-cell">
+                    <td className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-bold text-on-surface-variant uppercase hidden lg:table-cell">{row.location || 'Entrance A'}</td>
+                    <td className="px-4 py-3 sm:px-6 sm:py-4 hidden sm:table-cell">
                       <div className="flex items-center gap-2">
                         <div className="w-12 h-1 bg-surface-container-high rounded-full overflow-hidden hidden xl:block">
                           <div 
@@ -1487,7 +1487,7 @@ export default function LiveView() {
                         <span className="text-[10px] font-black text-on-surface">{Math.round((row.confidence || 0) * 100)}%</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-3 sm:px-6 sm:py-4">
                       <span className={`inline-flex items-center px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest ${
                         row.status === 'Valid' ? 'bg-primary/10 text-primary border border-primary/10' : 
                         row.status === 'Low Confidence' ? 'bg-amber-500/10 text-amber-600 border border-amber-500/10' : 
