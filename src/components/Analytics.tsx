@@ -249,8 +249,8 @@ export default function Analytics() {
         <div className="lg:col-span-2 bg-surface border border-surface-highest rounded-2xl p-6 shadow-sm">
           <div className="flex justify-between items-center mb-8">
             <div>
-              <h4 className="text-sm font-bold text-on-surface uppercase tracking-widest">Detection Velocity</h4>
-              <p className="text-xs text-on-surface-variant">Throughput metrics for {getTimeRangeLabel()}</p>
+              <h4 className="text-sm font-bold text-on-surface uppercase tracking-widest">Scanning Speed</h4>
+              <p className="text-xs text-on-surface-variant">Scan records for {getTimeRangeLabel()}</p>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5">
@@ -309,8 +309,8 @@ export default function Analytics() {
 
         {/* Vehicle Classification */}
         <div className="bg-surface border border-surface-highest rounded-2xl p-6 shadow-sm">
-          <h4 className="text-sm font-bold text-on-surface uppercase tracking-widest mb-1">Classification</h4>
-          <p className="text-xs text-on-surface-variant mb-8">Distribution by vehicle type</p>
+          <h4 className="text-sm font-bold text-on-surface uppercase tracking-widest mb-1">Vehicle Types</h4>
+          <p className="text-xs text-on-surface-variant mb-8">Percentage of each vehicle type</p>
           <div className="space-y-6">
             {[
               { label: 'Sedan / Compact', value: 64, color: 'bg-primary' },
@@ -349,8 +349,8 @@ export default function Analytics() {
       <section className="bg-surface border border-surface-highest rounded-2xl overflow-hidden shadow-sm">
         <div className="p-6 border-b border-surface-highest flex items-center justify-between">
           <div>
-            <h4 className="text-sm font-bold text-on-surface uppercase tracking-widest">Security Watchlist</h4>
-            <p className="text-xs text-on-surface-variant">Recent high-priority flagged entities</p>
+            <h4 className="text-sm font-bold text-on-surface uppercase tracking-widest">Watchlist History</h4>
+            <p className="text-xs text-on-surface-variant">Vehicles recently found on your watchlist</p>
           </div>
           <button className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">View All</button>
         </div>

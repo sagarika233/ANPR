@@ -8,6 +8,8 @@ import {
   Activity, 
   Database, 
   ExternalLink,
+  AlertOctagon,
+  LineChart,
   CameraOff,
   Camera,
   Maximize2,
@@ -650,53 +652,72 @@ export default function LiveView() {
   return (
     <div className="space-y-8 pb-32 md:pb-12 px-1">
       {/* Analytics Overview */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {[
           { 
-            label: "Total Plates Today", 
+            label: "Today", 
             value: (stats?.todayDetections ?? 0).toLocaleString(), 
-            change: (stats?.detectionsChange || 0) === 0 ? "Normal" : `${(stats?.detectionsChange || 0) > 0 ? '+' : ''}${(stats?.detectionsChange || 0).toFixed(1)}%`, 
+            change: "Latest", 
             icon: Car, 
-            color: "text-primary",
-            bg: "bg-primary-container/10"
+            bg: "bg-primary-fixed",
+            text: "text-on-primary-fixed",
+            iconBg: "bg-primary/10",
+            iconColor: "text-primary"
           },
           { 
             label: "Active Cameras", 
             value: (stats?.activeCameras ?? 0).toString(), 
-            change: "Stable", 
+            change: "+0%", 
             icon: Video, 
-            color: "text-tertiary",
-            bg: "bg-tertiary-container/10"
+            bg: "bg-tertiary-fixed",
+            text: "text-on-tertiary-fixed",
+            iconBg: "bg-tertiary/10",
+            iconColor: "text-tertiary"
           },
           { 
-            label: "Recognition Accuracy", 
+            label: "Watchlist Hits", 
+            value: (stats?.watchlistHits ?? 0).toString(), 
+            change: "Critical", 
+            icon: AlertOctagon, 
+            bg: "bg-error-container",
+            text: "text-on-error-container",
+            iconBg: "bg-error/10",
+            iconColor: "text-error"
+          },
+          { 
+            label: "Avg Confidence", 
             value: `${((stats?.avgConfidence || 0) * 100).toFixed(1)}%`, 
-            change: (stats?.confidenceChange || 0) === 0 ? "Real-time" : `${(stats?.confidenceChange || 0) > 0 ? '+' : ''}${(stats?.confidenceChange || 0).toFixed(1)}%`, 
-            icon: TrendingUp, 
-            color: "text-secondary",
-            bg: "bg-secondary-container/20"
+            change: "High", 
+            icon: LineChart, 
+            bg: "bg-secondary-container",
+            text: "text-on-secondary-container",
+            iconBg: "bg-secondary/10",
+            iconColor: "text-secondary"
           },
         ].map((stat, i) => (
           <motion.div 
             key={i}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.1 }}
-            className="bg-surface-container-lowest p-6 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-md transition-all card-shadow"
+            whileHover={{ scale: 1.02, y: -4 }}
+            transition={{ delay: i * 0.1, duration: 0.2 }}
+            className={`p-6 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text}`}
           >
-            <div className="flex justify-between items-start mb-4">
-              <div className={`p-3 rounded-xl ${stat.bg} ${stat.color}`}>
+            {/* Subtle background decoration */}
+            <div className={`absolute -right-4 -top-4 w-20 h-20 rounded-full ${stat.iconBg} blur-2xl opacity-40 group-hover:scale-150 transition-transform duration-500`} />
+            
+            <div className="flex justify-between items-start mb-4 relative z-10">
+              <div className={`p-3 rounded-xl ${stat.iconBg} ${stat.iconColor} transition-transform group-hover:rotate-12`}>
                 <stat.icon size={20} />
               </div>
-              <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${
-                stat.change.includes('+') ? 'bg-tertiary-container/10 text-tertiary' : 
-                stat.change === 'Critical' ? 'bg-error-container text-error' : 'bg-surface-container-highest text-on-surface-variant'
-              }`}>
+              <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${stat.iconBg} ${stat.iconColor}`}>
                 {stat.change}
               </span>
             </div>
-            <p className="text-3xl font-black tracking-tight text-on-surface">{stat.value}</p>
-            <p className="text-[10px] text-on-surface-variant font-black uppercase tracking-widest mt-1 opacity-60">{stat.label}</p>
+            <div className="relative z-10">
+              <p className="text-2xl sm:text-3xl font-black tracking-tight leading-none mb-1">{stat.value}</p>
+              <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{stat.label}</p>
+            </div>
           </motion.div>
         ))}
       </div>
@@ -775,7 +796,7 @@ export default function LiveView() {
                   </div>
                   <h4 className="text-lg sm:text-2xl font-black text-on-surface mb-2 sm:mb-3 tracking-tighter uppercase whitespace-nowrap">Camera Offline</h4>
                   <p className="text-[10px] sm:text-sm text-on-surface-variant max-w-[200px] sm:max-w-sm font-medium leading-relaxed opacity-60 uppercase tracking-tight">
-                    Wait for input or connect a live feed to begin detection.
+                    Please connect a camera or upload an image to start scanning.
                   </p>
                 </div>
               ) : (
@@ -1254,7 +1275,10 @@ export default function LiveView() {
 
           <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col h-[calc(100vh-280px)] lg:h-[700px] overflow-hidden">
             <div className="p-6 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
-              <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface leading-none">Recent Scans</h3>
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-widest text-on-surface leading-none mb-1">Recent Detections</h3>
+                <p className="text-[9px] text-on-surface-variant font-medium uppercase tracking-tight opacity-60">Real-time processing stream</p>
+              </div>
               <div className="flex items-center gap-2">
                 <Activity size={16} className="text-blue-600 animate-pulse" />
               </div>
@@ -1264,7 +1288,7 @@ export default function LiveView() {
               {liveDetections.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
                   <Database size={40} className="mb-4 text-slate-300" />
-                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Awaiting Scans...</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Awaiting Detections...</p>
                 </div>
               ) : (
                 liveDetections.map((det, i) => (
@@ -1334,58 +1358,138 @@ export default function LiveView() {
               View Full History
             </button>
           </div>
-
-          {/* Quick Actions / Node Tools */}
-          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-6 shadow-sm">
-            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant mb-6">System Status</h3>
-            <div className="flex flex-col gap-4">
-              <button 
-                onClick={() => {
-                  const doc = new jsPDF();
-                  
-                  // PDF Header
-                  doc.setFontSize(18);
-                  doc.setTextColor(30, 41, 59); // slate-800
-                  doc.text('Security Report: Recent Scans', 14, 22);
-                  
-                  doc.setFontSize(10);
-                  doc.setTextColor(100, 116, 139); // slate-500
-                  doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
-                  doc.text(`Camera ID: ENTRANCE-001`, 14, 35);
-                  
-                  const tableHeaders = [['Plate', 'Timestamp', 'Confidence', 'Make', 'Model']];
-                  const tableData = liveDetections.map(det => [
-                    det.plate,
-                    new Date(det.timestamp).toLocaleString(),
-                    `${((det.confidence || 0) * 100).toFixed(1)}%`,
-                    det.make || 'N/A',
-                    det.model || 'N/A'
-                  ]);
-
-                  autoTable(doc, {
-                    startY: 45,
-                    head: tableHeaders,
-                    body: tableData,
-                    theme: 'striped',
-                    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 10, fontStyle: 'bold' },
-                    bodyStyles: { fontSize: 9, textColor: 51 },
-                    alternateRowStyles: { fillColor: [248, 250, 252] },
-                    margin: { top: 45 }
-                  });
-
-                  doc.save(`operational_logs_${new Date().getTime()}.pdf`);
-                }}
-                className="p-4 bg-slate-50 hover:bg-slate-100 border border-slate-100 rounded-2xl text-center transition-all group flex flex-col items-center justify-center gap-2"
-              >
-                <div className="w-10 h-10 rounded-full bg-white flex items-center justify-center text-slate-400 group-hover:text-blue-600 shadow-sm transition-colors border border-slate-100">
-                  <Database size={20} />
-                </div>
-                <span className="text-[9px] font-bold text-slate-800 uppercase tracking-widest">Export Logs</span>
-              </button>
-            </div>
-          </div>
         </div>
       </div>
+
+      {/* Full-width System Logs Table Section */}
+      <section className="bg-surface-container-lowest rounded-2xl shadow-md border border-outline-variant/5 overflow-hidden mt-8">
+        <div className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/10">
+          <div>
+            <h3 className="text-lg font-bold text-on-surface">System Logs</h3>
+            <p className="text-xs text-on-surface-variant font-medium mt-1">History of scanned plates</p>
+          </div>
+          <div className="flex gap-3">
+            <button 
+              onClick={() => {
+                const doc = new jsPDF();
+                doc.setFontSize(22);
+                doc.setTextColor(30, 41, 59);
+                doc.text('Security System: Status Report', 14, 22);
+                
+                doc.setFontSize(10);
+                doc.setTextColor(100, 116, 139);
+                doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 30);
+                doc.text(`Summary of Recent Detections`, 14, 35);
+                
+                const tableHeaders = [['Plate', 'Make', 'Model', 'Location', 'Timestamp', 'Confidence', 'Status']];
+                const tableData = liveDetections.slice(0, 20).map(row => [
+                  row.plate || 'N/A',
+                  row.make || 'N/A',
+                  row.model || 'N/A',
+                  row.location || 'Entrance A',
+                  new Date(row.timestamp).toLocaleString(),
+                  `${((row.confidence || 0) * 100).toFixed(1)}%`,
+                  row.status || 'N/A'
+                ]);
+
+                autoTable(doc, {
+                  startY: 45,
+                  head: tableHeaders,
+                  body: tableData,
+                  theme: 'striped',
+                  headStyles: { fillColor: [30, 41, 59], textColor: 255, fontSize: 10, fontStyle: 'bold' },
+                  bodyStyles: { fontSize: 9, textColor: 51 },
+                  alternateRowStyles: { fillColor: [248, 250, 252] },
+                  margin: { top: 45 }
+                });
+
+                doc.save(`system_logs_${new Date().getTime()}.pdf`);
+              }}
+              className="px-5 py-2.5 bg-surface-container-high text-on-surface-variant text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-surface-dim transition-colors flex items-center gap-2"
+            >
+              <Download size={14} />
+              Export PDF
+            </button>
+            <button 
+              onClick={() => window.dispatchEvent(new CustomEvent('changeTab', { detail: 'history' }))}
+              className="px-5 py-2.5 bg-primary text-white text-[10px] font-black uppercase tracking-widest rounded-xl hover:shadow-lg shadow-primary/20 transition-all"
+            >
+              Full History
+            </button>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-surface-container-low/50">
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Record ID</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Picture Details</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">License Plate</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Region</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Confidence</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-outline-variant/5">
+              {liveDetections.length > 0 ? (
+                liveDetections.map((row, i) => (
+                  <tr key={row.id || i} className="hover:bg-surface-container-low transition-colors group">
+                    <td className="px-6 py-4 text-[11px] font-mono font-bold text-on-surface-variant">#{row.id?.slice(-6).toUpperCase() || 'UNKSYS'}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-8 bg-black rounded border border-outline-variant/10 overflow-hidden shrink-0">
+                          {row.image_url || row.image ? (
+                            <img src={row.image_url || row.image} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-surface-container-low">
+                               <Car size={12} className="text-outline-variant opacity-20" />
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-bold text-on-surface uppercase truncate max-w-[120px]">{row.make || 'Vehicle'} {row.model || ''}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className="px-3 py-1 bg-on-surface text-surface rounded-lg font-headline font-black text-sm tracking-widest">
+                        {row.plate}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase">{row.location || 'Entrance A'}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-12 h-1 bg-surface-container-high rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full ${row.confidence > 0.8 ? 'bg-primary' : row.confidence > 0.5 ? 'bg-amber-500' : 'bg-error'}`}
+                            style={{ width: `${(row.confidence || 0) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-black text-on-surface">{Math.round((row.confidence || 0) * 100)}%</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                        row.status === 'Valid' ? 'bg-primary/10 text-primary' : 
+                        row.status === 'Low Confidence' ? 'bg-amber-500/10 text-amber-600' : 
+                        'bg-error/10 text-error'
+                      }`}>
+                        {row.status || 'Scanned'}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="px-10 py-12 text-center opacity-40">
+                    <Activity size={32} className="mx-auto mb-4" />
+                    <p className="text-xs font-bold uppercase tracking-widest">No plate records found.</p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {/* Hidden Elements */}
       <input 

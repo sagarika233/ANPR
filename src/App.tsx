@@ -6,7 +6,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Layout from './components/Layout';
-import Dashboard from './components/Dashboard';
 import LiveView from './components/LiveView';
 import History from './components/History';
 import { SettingsProvider } from './context/SettingsContext';
@@ -28,8 +27,6 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <Dashboard />;
-      case 'live':
         return <LiveView />;
       case 'history':
         return <History initialSearch={globalSearchQuery} />;
@@ -70,7 +67,7 @@ export default function App() {
           </div>
         );
       default:
-        return <Dashboard />;
+        return <LiveView />;
     }
   };
 

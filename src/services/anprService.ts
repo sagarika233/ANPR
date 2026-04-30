@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { sharpenImage, enhanceContrast, resizeImage, calculateBlurScore, cannyEdgeDetection } from "../utils/imageUtils";
+import { sharpenImage, enhanceContrast, resizeImage, calculateBlurScore, adaptiveThresholding } from "../utils/imageUtils";
 
 export interface DetectionResult {
   plate: string;
@@ -106,19 +106,20 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
     const blurScore = await calculateBlurScore(base64Image);
     const isImageBlurry = blurScore < 250; 
     
-    // Manage payload size for browser stability
-    const resizedOriginal = await resizeImage(base64Image, 600);
-    const edgeDetected = await cannyEdgeDetection(resizedOriginal);
-    const sharpened = await sharpenImage(edgeDetected);
+    // Manage payload size for browser stability and enhance for OCR
+    const resizedOriginal = await resizeImage(base64Image, 800); 
+    const sharpened = await sharpenImage(resizedOriginal);
     const contrastEnhanced = await enhanceContrast(sharpened);
+    const adaptive = await adaptiveThresholding(contrastEnhanced);
     
     const cleanOrig = resizedOriginal.split(',')[1] || resizedOriginal;
     const cleanEnhanced = contrastEnhanced.split(',')[1] || contrastEnhanced;
+    const cleanAdaptive = adaptive.split(',')[1] || adaptive;
 
     console.log(`ANPR Blur Score: ${Math.round(blurScore)}, Payload: ${Math.round(resizedOriginal.length / 1024)} KB`);
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-3-flash-preview",
       contents: [
         {
           role: "user",
@@ -136,25 +137,36 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
               },
             },
             {
-              text: `You are an ELITE ultra-precision Multi-Vehicle ANPR and Classification Engine. 
+              inlineData: {
+                mimeType: "image/jpeg",
+                data: cleanAdaptive,
+              },
+            },
+            {
+              text: `You are an ULTRA-ADVANCED YOLO-v8 Hyper-Precision ANPR & Vehicle Classification System.
             
-            STAGE 1: IMAGE SEGMENTATION & ROI ANALYSIS
-            - Perform sub-pixel scanning on the dual-exposure inputs provided (Original + High-Contrast).
-            - Identify all vehicles. A detection MUST have an ULTRA-TIGHT bounding box around the LICENSE PLATE TEXT only (crop precisely to the edges of the characters).
+            CORE MISSION: Extract license plates from any input, specifically optimized for:
+            1. MOTION BLUR: Compensation for fast-moving vehicles.
+            2. SEMI-BLUR/FOG: Advanced contrast-aware edge reconstruction using the provided Adaptive Threshold and Enhanced exposures.
+            3. LOW RESOLUTION: Sub-pixel character inference.
             
-            STAGE 2: LICENSE PLATE RECOGNITION (LPR) & HEURISTICS
-            - TARGET: Indian Standard HSRP plates (White, Yellow, Green, Black).
-            - PATTERN: MH12AB1234, OD02BA9010, etc.
-            - STATUS ASSIGNMENT:
-                * 'Valid': Confidence > 0.85 and pattern matches exactly.
-                * 'Low Confidence': Confidence between 0.70 and 0.85, or pattern is borderline.
-                * 'Blurry Image': Input is objectively blurry or characters are smudged.
+            STAGE 1: NEURAL SEARCH & SEGMENTATION
+            - Use the TRIPLE-input stream (Original + AI-Enhanced Edge Contrast + Adaptive Binary).
+            - Execute YOLO-style scanning to localize all vehicles.
+            - Extract license plate ROIs with sub-millimeter precision. Bounding boxes MUST be strictly character-aligned.
             
-            STAGE 3: VEHICLE INTELLIGENCE
-            - Identify Brand (Make), Model, and Category.
+            STAGE 2: OCR UNDER EXTREME CONDITIONS (BLUR/SMUDGE)
+            - Target: Indian Standard HSRP plates (High Security Registration Plates).
+            - Logical Inference: If a character is partially obscured by blur, use standard patterns (SS DD CC NNNN) to infer the most probable character.
+            - Comparison: Use the Adaptive Binary frame to isolate character shapes from the semi-blurry background.
             
-            STRICT CONSTRAINTS:
-            - Return ONLY valid JSON with 'detections' array containing objects with: plate, confidence, status, make, model, vehicle_type, bbox (x, y, width, height), is_blurry.`,
+            STAGE 3: CONFIDENCE SCORING
+            - 'Valid': Confident match (>0.90).
+            - 'Low Confidence': Readable but slightly ambiguous due to semi-blur (0.75-0.90).
+            - 'Blurry Image': Severely impacted but attempted (0.50-0.75).
+            
+            OUTPUT SCHEMA (JSON ONLY):
+            - detections: [{ plate, confidence, status, make, model, vehicle_type, bbox: {x,y,w,h}, is_blurry }]`,
             },
           ],
         },

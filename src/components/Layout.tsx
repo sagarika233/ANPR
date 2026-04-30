@@ -15,9 +15,9 @@ import {
   Info,
   Menu,
   User,
-  LayoutDashboard,
   BellRing,
-  Activity
+  Activity,
+  LayoutDashboard
 } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 
@@ -71,7 +71,6 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'live', label: 'Live Monitor', icon: Video },
     { id: 'history', label: 'History', icon: History },
     { id: 'alerts', label: 'Alert Rules', icon: BellRing },
     { id: 'health', label: 'System Health', icon: Activity },
@@ -93,7 +92,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
           <h2 className="text-xl font-black tracking-tighter text-on-surface font-headline uppercase leading-none">
             Vigilant <span className="text-primary group-hover:text-primary-container transition-colors">ALPR</span>
           </h2>
-          <p className="text-[10px] font-bold text-outline uppercase tracking-[0.3em] mt-2">Secure Node Auto</p>
+          <p className="text-[10px] font-bold text-outline uppercase tracking-[0.3em] mt-2">Smart Plate System</p>
         </div>
         <nav className="flex-1 px-4 space-y-1">
           {navItems.map((item) => (
@@ -188,7 +187,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
                   className="absolute right-4 sm:right-8 top-16 mt-2 w-[calc(100vw-2rem)] sm:w-96 bg-surface-container-lowest border border-outline-variant/10 rounded-3xl shadow-2xl overflow-hidden z-[60]"
                 >
                   <div className="p-4 sm:p-6 border-b border-surface-container flex justify-between items-center bg-surface-container-low/50">
-                    <h3 className="text-[10px] sm:text-xs font-black uppercase tracking-[0.2em] text-on-surface">Recent Scans</h3>
+                    <h3 className="text-[10px] sm:text-xs font-black uppercase tracking-[0.2em] text-on-surface">Recent Detections</h3>
                     <button onClick={() => setShowNotifications(false)} className="text-outline hover:text-on-surface">
                       <X size={18} className="sm:w-5 sm:h-5" />
                     </button>
@@ -239,7 +238,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
             >
               <item.icon size={20} />
               <span className="text-[10px] font-bold uppercase tracking-tighter">
-                {item.id === 'dashboard' ? 'Dash' : item.label.split(' ')[0]}
+                {item.label.split(' ')[0]}
               </span>
             </button>
           ))}

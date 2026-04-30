@@ -21,21 +21,34 @@ const PORT = 3000;
 app.use(express.json({ limit: '50mb' }));
 
 // Supabase Setup
-const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://iaypkmmfsbsrofirbmhd.supabase.co';
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_rFqKjObrhw5Z4n2zT2mDrw_PT-6mPHk';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+const isSupabaseConfigured = supabaseUrl.startsWith('https://') && supabaseAnonKey.length > 0;
+
+let supabase: any = null;
+if (isSupabaseConfigured) {
+  try {
+    supabase = createClient(supabaseUrl, supabaseAnonKey);
+  } catch (e) {
+    console.error("Failed to initialize Supabase client:", e);
+  }
+}
 
 // Test Supabase connection on startup
 async function testSupabase() {
+  if (!supabase) {
+    console.warn("Supabase NOT configured. Using local SQLite as primary store.");
+    return;
+  }
   try {
     const { error } = await supabase.from('vehicle_records').select('count', { count: 'exact', head: true });
     if (error) {
-      console.error("CRITICAL DATABASE ERROR on startup:", JSON.stringify(error));
+      console.warn("Supabase connection established but 'vehicle_records' check failed. Check schema.", JSON.stringify(error));
     } else {
       console.log("Supabase connection and 'vehicle_records' table verified.");
     }
   } catch (err: any) {
-    console.error("Supabase initialization crash:", err.message);
+    console.error("Supabase connection check crashed:", err.message);
   }
 }
 testSupabase();
@@ -205,31 +218,52 @@ app.get("/api/stats", async (req, res) => {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    // Fetch today's stats from Supabase
-    const { data: todayData, error: todayError } = await supabase
-      .from('vehicle_records')
-      .select('confidence, location')
-      .gte('timestamp', today.toISOString());
+    if (supabase) {
+      // Fetch today's stats from Supabase
+      const { data: todayData, error: todayError } = await supabase
+        .from('vehicle_records')
+        .select('confidence, location')
+        .gte('timestamp', today.toISOString());
 
-    if (todayError) throw todayError;
+      if (todayError) throw todayError;
 
-    // Fetch yesterday's count for trend
-    const { count: yesterdayCount, error: yesterdayError } = await supabase
-      .from('vehicle_records')
-      .select('*', { count: 'exact', head: true })
-      .gte('timestamp', yesterday.toISOString())
-      .lt('timestamp', today.toISOString());
+      // Fetch yesterday's count for trend
+      const { count: yesterdayCount, error: yesterdayError } = await supabase
+        .from('vehicle_records')
+        .select('*', { count: 'exact', head: true })
+        .gte('timestamp', yesterday.toISOString())
+        .lt('timestamp', today.toISOString());
 
-    if (yesterdayError) throw yesterdayError;
+      if (yesterdayError) throw yesterdayError;
 
-    if (todayData) {
-      stats.todayDetections = todayData.length;
-      stats.avgConfidence = todayData.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / (todayData.length || 1);
-      const uniqueLocations = new Set(todayData.map(d => d.location));
+      if (todayData) {
+        stats.todayDetections = todayData.length;
+        stats.avgConfidence = todayData.reduce((acc: any, curr: any) => acc + (curr.confidence || 0), 0) / (todayData.length || 1);
+        const uniqueLocations = new Set(todayData.map((d: any) => d.location));
+        stats.activeCameras = Math.max(uniqueLocations.size, 1);
+        
+        if (yesterdayCount !== null && yesterdayCount > 0) {
+          stats.detectionsChange = ((stats.todayDetections - yesterdayCount) / yesterdayCount) * 100;
+        }
+      }
+    } else {
+      // Fallback: Fetch from SQLite
+      const todayIso = today.toISOString();
+      const yesterdayIso = yesterday.toISOString();
+      
+      const todayQuery = "SELECT confidence, location FROM history WHERE timestamp >= ?";
+      const yesterdayQuery = "SELECT COUNT(*) as count FROM history WHERE timestamp >= ? AND timestamp < ?";
+      
+      const todayRows: any[] = await new Promise((resolve) => db.all(todayQuery, [todayIso], (err, rows) => resolve(rows || [])));
+      const yesterdayResult: any = await new Promise((resolve) => db.get(yesterdayQuery, [yesterdayIso, todayIso], (err, row) => resolve(row || { count: 0 })));
+      
+      stats.todayDetections = todayRows.length;
+      stats.avgConfidence = todayRows.reduce((acc: any, curr: any) => acc + (curr.confidence || 0), 0) / (todayRows.length || 1);
+      const uniqueLocations = new Set(todayRows.map((d: any) => d.location));
       stats.activeCameras = Math.max(uniqueLocations.size, 1);
       
-      if (yesterdayCount !== null && yesterdayCount > 0) {
-        stats.detectionsChange = ((stats.todayDetections - yesterdayCount) / yesterdayCount) * 100;
+      if (yesterdayResult.count > 0) {
+        stats.detectionsChange = ((stats.todayDetections - yesterdayResult.count) / yesterdayResult.count) * 100;
       }
     }
 
@@ -245,7 +279,7 @@ app.get("/api/stats", async (req, res) => {
     res.status(500).json({ 
       error: "Failed to fetch statistics", 
       details: errorDetails.message,
-      hint: "Ensure 'vehicle_records' table exists in Supabase. Check supabase-schema.sql"
+      hint: "Ensure 'vehicle_records' table exists in Supabase or local history table is populated."
     });
   }
 });
@@ -266,24 +300,41 @@ app.get("/api/search", async (req, res) => {
   const { plate } = req.query;
 
   try {
-    let queryBuilder = supabase
-      .from('vehicle_records')
-      .select('*')
-      .order('timestamp', { ascending: false })
-      .limit(20);
+    if (supabase) {
+      let queryBuilder = supabase
+        .from('vehicle_records')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(20);
 
-    if (plate) {
-      queryBuilder = queryBuilder.ilike('plate_number', `%${plate}%`);
+      if (plate) {
+        queryBuilder = queryBuilder.ilike('plate_number', `%${plate}%`);
+      }
+
+      const { data, error } = await queryBuilder;
+
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        return res.json({ message: "No data found", data: [] });
+      }
+      return res.json(data);
+    } else {
+      // Fallback to SQLite
+      return new Promise((resolve) => {
+        let query = "SELECT *, plate as plate_number, image as image_url FROM history";
+        const params: any[] = [];
+        if (plate) {
+          query += " WHERE plate LIKE ?";
+          params.push(`%${plate}%`);
+        }
+        query += " ORDER BY timestamp DESC LIMIT 20";
+        
+        db.all(query, params, (err, rows) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json(rows || []);
+        });
+      });
     }
-
-    const { data, error } = await queryBuilder;
-
-    if (error) throw error;
-    if (!data || data.length === 0) {
-      return res.json({ message: "No data found", data: [] });
-    }
-
-    res.json(data);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -355,68 +406,87 @@ app.post("/api/detections", async (req, res) => {
     const plateUpper = plate.toUpperCase();
     const tenSecondsAgo = new Date(Date.now() - 10000).toISOString();
 
-    // 1. Deduplication: Check if same plate recorded in last 10 seconds
-    const { data: recent, error: checkError } = await supabase
-      .from('vehicle_records')
-      .select('id')
-      .eq('plate_number', plateUpper)
-      .gt('timestamp', tenSecondsAgo)
-      .limit(1);
+    if (supabase) {
+      // 1. Deduplication: Check if same plate recorded in last 10 seconds
+      const { data: recent, error: checkError } = await supabase
+        .from('vehicle_records')
+        .select('id')
+        .eq('plate_number', plateUpper)
+        .gt('timestamp', tenSecondsAgo)
+        .limit(1);
 
-    if (checkError) throw checkError;
-    if (recent && recent.length > 0) {
-      return res.json({ success: true, message: "Duplicate suppressed (10s window)", id: recent[0].id });
+      if (checkError) throw checkError;
+      if (recent && recent.length > 0) {
+        return res.json({ success: true, message: "Duplicate suppressed (10s window)", id: recent[0].id });
+      }
     }
 
     const registry = lookupRegistry(plate);
 
-    // 2. Store in Supabase
-    const { data: inserted, error: insertError } = await supabase
-      .from('vehicle_records')
-      .insert([{
-        plate_number: plateUpper,
-        confidence: confidence || 0,
-        vehicle_type: vehicle_type || 'Unknown',
-        make: make || 'Unknown',
-        model: model || 'Unknown',
-        location: location || "Main Entrance",
-        status: status || "Detected",
-        image_url: image, // Store as text for now
-        timestamp: new Date().toISOString()
-      }])
-      .select();
+    // 2. Store in DB
+    let lastID: any = null;
+    if (supabase) {
+      const { data: inserted, error: insertError } = await supabase
+        .from('vehicle_records')
+        .insert([{
+          plate_number: plateUpper,
+          confidence: confidence || 0,
+          vehicle_type: vehicle_type || 'Unknown',
+          make: make || 'Unknown',
+          model: model || 'Unknown',
+          location: location || "Main Entrance",
+          status: status || "Detected",
+          image_url: image,
+          timestamp: new Date().toISOString()
+        }])
+        .select();
 
-    if (insertError) throw insertError;
-    const lastID = inserted[0].id;
+      if (insertError) throw insertError;
+      lastID = inserted[0].id;
+    }
 
-    const detection = { 
-      id: lastID, plate: plateUpper, confidence, make, model, vehicle_type,
-      ...registry,
-      timestamp: new Date(), location, status, image, is_blurry
-    };
+    // Always store in SQLite as fallback/redundancy or primary if supabase disabled
+    db.run(`
+      INSERT INTO history 
+      (plate, confidence, make, model, vehicle_type, owner_name, registration_date, fuel_type, engine_number, chassis_number, location, status, image, is_blurry) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, 
+      [
+        plateUpper, confidence || 0, make || 'Unknown', model || 'Unknown', vehicle_type || 'Unknown',
+        registry.owner_name, registry.registration_date, registry.fuel_type, registry.engine_number, registry.chassis_number,
+        location || 'Main Entrance', status || 'Detected', image, is_blurry ? 1 : 0
+      ], 
+      function(this: any, err: any) {
+        if (!lastID) lastID = this.lastID;
+        
+        const detection = { 
+          id: lastID, plate: plateUpper, confidence, make, model, vehicle_type,
+          ...registry,
+          timestamp: new Date(), location, status, image, is_blurry
+        };
 
-    // 3. Real-time Alert Rule Check (Still using local SQLite for watchlist)
-    db.get("SELECT * FROM watchlist WHERE plate = ?", [plateUpper], (err, row: any) => {
-      if (!err && row) {
-        // If in watchlist, broadcast an ALERT
-        wss.clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ 
-              type: 'ALERT', 
-              data: { ...detection, alertType: row.type, reason: row.reason } 
-            }));
+        // 3. Real-time Alert Rule Check
+        db.get("SELECT * FROM watchlist WHERE plate = ?", [plateUpper], (err, row: any) => {
+          if (!err && row) {
+            wss.clients.forEach(client => {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ 
+                  type: 'ALERT', 
+                  data: { ...detection, alertType: row.type, reason: row.reason } 
+                }));
+              }
+            });
+          } else {
+            wss.clients.forEach(client => {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'NEW_DETECTION', data: detection }));
+              }
+            });
           }
         });
-      } else {
-        wss.clients.forEach(client => {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: 'NEW_DETECTION', data: detection }));
-          }
-        });
+        
+        res.json({ success: true, id: lastID });
       }
-    });
-    
-    res.json({ success: true, id: lastID });
+    );
   } catch (err: any) {
     const errorDetails = {
       message: err.message || "Unknown error",
@@ -427,8 +497,7 @@ app.post("/api/detections", async (req, res) => {
     console.error("CRITICAL: Detection storage failed:", JSON.stringify(errorDetails));
     res.status(500).json({ 
       error: err.message || "Detection storage failed",
-      details: errorDetails.message,
-      hint: "Check if 'vehicle_records' table exists in your Supabase project."
+      details: errorDetails.message
     });
   }
 });
