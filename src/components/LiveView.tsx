@@ -373,34 +373,67 @@ export default function LiveView() {
     setHasCameraError(false);
     try {
       // Use selectedDeviceIds or fallback to first available
-      const idsToOpen = selectedDeviceIds.length > 0 
-        ? selectedDeviceIds 
-        : (availableDevices.length > 0 ? [availableDevices[0].deviceId] : []);
+      let idsToOpen = selectedDeviceIds.filter(id => id && id !== "");
+      
+      if (idsToOpen.length === 0 && availableDevices.length > 0) {
+        const firstId = availableDevices[0].deviceId;
+        if (firstId) idsToOpen = [firstId];
+      }
 
       const newActiveCameras: ActiveCamera[] = [];
       
-      for (const deviceId of idsToOpen) {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-              deviceId: { exact: deviceId },
-              facingMode: 'environment',
-              width: { ideal: 1920 },
-              height: { ideal: 1080 }
-            } 
-          });
-          
-          const deviceInfo = availableDevices.find(d => d.deviceId === deviceId);
-          
-          newActiveCameras.push({
-            id: deviceId,
-            name: deviceInfo?.label || `Camera ${newActiveCameras.length + 1}`,
-            stream,
-            videoRef: React.createRef(),
-            isSelected: newActiveCameras.length === 0
-          });
-        } catch (e) {
-          console.warn(`Failed to open camera ${deviceId}:`, e);
+      if (idsToOpen.length === 0) {
+        // Fallback: No device IDs found, request generic video to trigger permission and discovery
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          } 
+        });
+        
+        newActiveCameras.push({
+          id: 'default',
+          name: 'Primary Camera',
+          stream,
+          videoRef: React.createRef(),
+          isSelected: true
+        });
+      } else {
+        for (const deviceId of idsToOpen) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+              video: { 
+                deviceId: { exact: deviceId },
+                facingMode: 'environment',
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+              } 
+            });
+            
+            const deviceInfo = availableDevices.find(d => d.deviceId === deviceId);
+            
+            newActiveCameras.push({
+              id: deviceId,
+              name: deviceInfo?.label || `Camera ${newActiveCameras.length + 1}`,
+              stream,
+              videoRef: React.createRef(),
+              isSelected: newActiveCameras.length === 0
+            });
+          } catch (e) {
+            console.warn(`Failed to open camera ${deviceId}, trying fallback:`, e);
+            // Even if specific ID failed, try generic for this slot if it's the first one
+            if (newActiveCameras.length === 0) {
+              const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+              newActiveCameras.push({
+                id: 'fallback',
+                name: 'Main Camera',
+                stream,
+                videoRef: React.createRef(),
+                isSelected: true
+              });
+            }
+          }
         }
       }
       
@@ -410,6 +443,10 @@ export default function LiveView() {
       setIsQueueRunning(false);
       setCurrentQueueIndex(-1);
       setIsDetecting(true);
+
+      // Refresh devices after permission is granted to get labels
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setAvailableDevices(devices.filter(d => d.kind === 'videoinput'));
     } catch (err) {
       console.error("Camera access error:", err);
       setHasCameraError(true);
@@ -659,9 +696,9 @@ export default function LiveView() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
         {[
           { 
-            label: "Today", 
+            label: "Scans", 
             value: (stats?.todayDetections ?? 0).toLocaleString(), 
-            change: "Latest", 
+            change: "Today", 
             icon: Car, 
             bg: "bg-primary-fixed",
             text: "text-on-primary-fixed",
@@ -669,9 +706,9 @@ export default function LiveView() {
             iconColor: "text-primary"
           },
           { 
-            label: "Active Cameras", 
+            label: "Cameras", 
             value: (stats?.activeCameras ?? 0).toString(), 
-            change: "+0%", 
+            change: "Active", 
             icon: Video, 
             bg: "bg-tertiary-fixed",
             text: "text-on-tertiary-fixed",
@@ -679,9 +716,9 @@ export default function LiveView() {
             iconColor: "text-tertiary"
           },
           { 
-            label: "Watchlist Hits", 
+            label: "Alerts", 
             value: (stats?.watchlistHits ?? 0).toString(), 
-            change: "Critical", 
+            change: "Hits", 
             icon: AlertOctagon, 
             bg: "bg-error-container",
             text: "text-on-error-container",
@@ -689,9 +726,9 @@ export default function LiveView() {
             iconColor: "text-error"
           },
           { 
-            label: "Avg Confidence", 
-            value: `${((stats?.avgConfidence || 0) * 100).toFixed(1)}%`, 
-            change: "High", 
+            label: "Conf", 
+            value: `${((stats?.avgConfidence || 0) * 100).toFixed(0)}%`, 
+            change: "Avg", 
             icon: LineChart, 
             bg: "bg-secondary-container",
             text: "text-on-secondary-container",
@@ -703,42 +740,39 @@ export default function LiveView() {
             key={i}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            whileHover={{ scale: 1.02, y: -4 }}
+            whileHover={{ scale: 1.02 }}
             transition={{ delay: i * 0.1, duration: 0.2 }}
-            className={`p-6 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text}`}
+            className={`p-4 sm:p-6 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text}`}
           >
-            {/* Subtle background decoration */}
-            <div className={`absolute -right-4 -top-4 w-20 h-20 rounded-full ${stat.iconBg} blur-2xl opacity-40 group-hover:scale-150 transition-transform duration-500`} />
-            
-            <div className="flex justify-between items-start mb-4 relative z-10">
-              <div className={`p-3 rounded-xl ${stat.iconBg} ${stat.iconColor} transition-transform group-hover:rotate-12`}>
-                <stat.icon size={20} />
+            <div className="flex justify-between items-start mb-3 sm:mb-4 relative z-10">
+              <div className={`p-2 sm:p-3 rounded-xl ${stat.iconBg} ${stat.iconColor} transition-transform group-hover:rotate-12`}>
+                <stat.icon size={18} className="sm:w-5 sm:h-5" />
               </div>
-              <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${stat.iconBg} ${stat.iconColor}`}>
+              <span className={`text-[8px] sm:text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${stat.iconBg} ${stat.iconColor}`}>
                 {stat.change}
               </span>
             </div>
             <div className="relative z-10">
-              <p className="text-2xl sm:text-3xl font-black tracking-tight leading-none mb-1">{stat.value}</p>
-              <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{stat.label}</p>
+              <p className="text-xl sm:text-3xl font-black tracking-tight leading-none mb-1">{stat.value}</p>
+              <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest opacity-70">{stat.label}</p>
             </div>
           </motion.div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6 sm:gap-8">
         {/* Main Monitor Section */}
-        <div className="lg:col-span-3 space-y-8">
-          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-3xl overflow-hidden shadow-md relative group">
+        <div className="xl:col-span-3 space-y-6 sm:space-y-8">
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl sm:rounded-3xl overflow-hidden shadow-md relative group">
             {/* Header */}
-            <div className="px-4 sm:px-10 py-4 sm:py-6 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-4 sm:gap-0">
-              <div className="flex flex-wrap items-center gap-3 sm:gap-5">
-                <div className={`w-2.5 h-2.5 rounded-full ${isDetecting ? 'bg-primary animate-pulse' : 'bg-outline-variant'}`}></div>
-                <h3 className="text-sm sm:text-lg font-black text-on-surface tracking-tighter uppercase whitespace-nowrap">ENTRANCE-001</h3>
-                <span className="text-[8px] sm:text-[10px] text-primary font-black uppercase tracking-[0.2em] px-2 sm:px-3 py-1 bg-primary-container/10 rounded-full border border-primary/5">
-                  {isDetecting ? 'Active' : 'Standby'}
+            <div className="px-5 sm:px-10 py-4 sm:py-6 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-4 sm:gap-0">
+              <div className="flex flex-wrap items-center gap-3 sm:gap-5 min-w-0">
+                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isDetecting ? 'bg-primary animate-pulse' : 'bg-outline-variant'}`}></div>
+                <h3 className="text-xs sm:text-lg font-black text-on-surface tracking-tighter uppercase whitespace-nowrap overflow-hidden text-ellipsis">SURV-ALPHA-NOD</h3>
+                <span className="text-[7px] sm:text-[10px] text-primary font-black uppercase tracking-[0.2em] px-2 sm:px-3 py-1 bg-primary-container/10 rounded-full border border-primary/5 shrink-0">
+                  {isDetecting ? 'Live' : 'Standby'}
                 </span>
-                <span className="hidden md:flex items-center gap-2 text-[10px] text-on-surface-variant font-bold uppercase tracking-widest pl-4 border-l border-outline-variant/10 opacity-60">
+                <span className="hidden sm:flex items-center gap-2 text-[9px] text-on-surface-variant font-bold uppercase tracking-widest pl-4 border-l border-outline-variant/10 opacity-60">
                    <Clock size={12} className="text-primary" />
                    {currentTime}
                 </span>
@@ -752,19 +786,15 @@ export default function LiveView() {
                          <span className="text-[8px] sm:text-[9px] font-black text-on-surface uppercase tracking-tight">{systemHealth.dbStatus}</span>
                        </div>
                     </div>
-                    <div className="hidden sm:flex flex-col">
-                       <span className="text-[7px] font-black uppercase text-on-surface-variant/40 tracking-widest">CPU</span>
-                       <span className="text-[9px] font-black text-primary uppercase tracking-tight">{systemHealth.cpu}%</span>
-                    </div>
                   </div>
                 )}
               </div>
             </div>
 
             {/* Display Area */}
-            <div className="relative aspect-video bg-inverse-surface group">
+            <div className="relative aspect-[4/3] sm:aspect-video bg-black group overflow-hidden">
               {/* Active Alerts Overlay */}
-              <div className="absolute top-2 right-2 sm:top-4 sm:right-4 z-50 flex flex-col gap-2 sm:gap-3 pointer-events-none max-w-[calc(100%-1rem)]">
+              <div className="absolute top-2 right-2 sm:top-6 sm:right-6 z-50 flex flex-col gap-2 sm:gap-4 pointer-events-none w-full max-w-[200px] sm:max-w-[320px]">
                 <AnimatePresence>
                   {activeAlerts.map((alert) => (
                     <motion.div
@@ -772,19 +802,19 @@ export default function LiveView() {
                       initial={{ opacity: 0, x: 50, scale: 0.9 }}
                       animate={{ opacity: 1, x: 0, scale: 1 }}
                       exit={{ opacity: 0, x: 20, scale: 0.8 }}
-                      className="bg-error text-white p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-2xl border border-white/20 min-w-[200px] sm:min-w-[280px] pointer-events-auto"
+                      className="bg-error/95 backdrop-blur-md text-white p-3 sm:p-5 rounded-xl sm:rounded-2xl shadow-2xl border border-white/20 pointer-events-auto"
                     >
                       <div className="flex items-start gap-3 sm:gap-4">
-                        <div className="p-1.5 sm:p-2 bg-white/20 rounded-lg sm:rounded-xl">
-                          <AlertCircle size={16} className="sm:w-5 sm:h-5" />
+                        <div className="p-2 bg-white/20 rounded-xl shrink-0">
+                          <AlertCircle size={18} className="sm:w-6 sm:h-6" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex justify-between items-center mb-0.5 sm:mb-1">
-                            <span className="text-[7px] sm:text-[9px] font-black uppercase tracking-[0.2em] opacity-80 truncate uppercase">{alert.alertType} HIT</span>
-                            <span className="text-[7px] sm:text-[9px] font-black uppercase tracking-[0.2em] whitespace-nowrap">{new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] opacity-80 truncate">WATCHLIST</span>
+                            <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em]">{new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
-                          <p className="text-base sm:text-xl font-black tracking-widest mb-0.5 sm:mb-1 truncate">{alert.plate}</p>
-                          <p className="text-[8px] sm:text-[10px] font-bold opacity-90 leading-tight uppercase tracking-tight truncate">{alert.reason}</p>
+                          <p className="text-sm sm:text-2xl font-black tracking-widest mb-1 truncate">{alert.plate}</p>
+                          <p className="text-[9px] sm:text-[11px] font-bold opacity-90 leading-tight uppercase tracking-tight line-clamp-1">{alert.reason}</p>
                         </div>
                       </div>
                     </motion.div>
@@ -793,20 +823,24 @@ export default function LiveView() {
               </div>
 
               {!isDetecting && !uploadedImage ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-container-lowest text-center p-6 sm:p-12 transition-all duration-700">
-                  <div className="w-20 h-20 sm:w-32 sm:h-32 bg-surface-container-high rounded-2xl sm:rounded-3xl flex items-center justify-center mb-4 sm:mb-8 shadow-sm border border-outline-variant/10 relative group-hover:scale-105 transition-transform duration-500">
-                    <CameraOff size={32} className="text-outline-variant sm:w-16 sm:h-16" strokeWidth={1.5} />
-                    <div className="absolute inset-0 border-2 border-outline-variant/10 rounded-2xl sm:rounded-3xl scale-110 opacity-50"></div>
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-container-lowest text-center p-6 sm:p-12">
+                  <div className="w-20 h-20 sm:w-40 sm:h-40 bg-surface-container-high rounded-3xl flex items-center justify-center mb-6 sm:mb-10 shadow-sm border border-outline-variant/10 relative">
+                    <CameraOff size={40} className="text-outline-variant sm:w-20 sm:h-20" strokeWidth={1} />
+                    <div className="absolute inset-x-0 -bottom-3 sm:-bottom-5 flex justify-center">
+                      <div className="px-3 py-1 bg-surface-container-lowest border border-outline-variant/20 rounded-full shadow-sm text-[8px] sm:text-[10px] font-black text-on-surface-variant uppercase tracking-wider">
+                        Sensor Idle
+                      </div>
+                    </div>
                   </div>
-                  <h4 className="text-lg sm:text-2xl font-black text-on-surface mb-2 sm:mb-3 tracking-tighter uppercase whitespace-nowrap">Camera Offline</h4>
-                  <p className="text-[10px] sm:text-sm text-on-surface-variant max-w-[200px] sm:max-w-sm font-medium leading-relaxed opacity-60 uppercase tracking-tight">
-                    Please connect a camera or upload an image to start scanning.
+                  <h4 className="text-lg sm:text-3xl font-black text-on-surface mb-3 tracking-tighter uppercase whitespace-nowrap">Node Standby</h4>
+                  <p className="text-[10px] sm:text-sm text-on-surface-variant max-w-[240px] sm:max-w-md font-medium leading-relaxed opacity-60 uppercase tracking-tight">
+                    Initialize sensor or provide analytical payload to commence automated surveillance logging.
                   </p>
                 </div>
               ) : (
-                <div className="w-full h-full relative">
-                  {/* HUD Brackets */}
-                  <div className="absolute inset-10 pointer-events-none z-20 transition-all duration-1000 group-hover:inset-6">
+                <div className="w-full h-full relative group/feed">
+                  {/* HUD Brackets - Only relevant on larger screens for tech vibe */}
+                  <div className="absolute inset-6 sm:inset-12 pointer-events-none z-20 transition-all duration-1000 group-hover/feed:inset-4 sm:group-hover/feed:inset-8 hidden sm:block">
                     <div className="hud-bracket hud-bracket-tl"></div>
                     <div className="hud-bracket hud-bracket-tr"></div>
                     <div className="hud-bracket hud-bracket-bl"></div>
@@ -822,58 +856,52 @@ export default function LiveView() {
                           initial={{ opacity: 0, y: -20 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: -20 }}
-                          className="absolute top-10 left-1/2 -translate-x-1/2 bg-error text-white px-8 py-4 rounded-3xl shadow-2xl flex flex-col items-center gap-2 pointer-events-auto z-50 border-4 border-white/20"
+                          className="absolute top-4 sm:top-10 left-1/2 -translate-x-1/2 bg-error text-white px-6 py-3 sm:px-8 sm:py-4 rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col items-center gap-1 sm:gap-2 pointer-events-auto z-50 border-2 sm:border-4 border-white/20 w-[90%] max-w-sm"
                         >
-                          <div className="flex items-center gap-3">
-                            <AlertCircle size={24} />
-                            <span className="font-black uppercase tracking-widest text-sm">Daily API Quota Reached</span>
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            <AlertCircle size={18} className="sm:w-6 sm:h-6" />
+                            <span className="font-black uppercase tracking-widest text-[10px] sm:text-sm">API Limit Reached</span>
                           </div>
-                          <p className="text-[10px] font-bold opacity-90 uppercase tracking-tight text-center">
-                            Gemini AI Limit Exhausted (20/day). Sensor processing is paused until daily reset.
+                          <p className="text-[8px] sm:text-[10px] font-bold opacity-90 uppercase tracking-tight text-center leading-tight">
+                            Gemini AI Limit Exhausted (20/day). Sensor processing is paused.
                           </p>
                         </motion.div>
                       )}
                     </AnimatePresence>
 
                     <div className="flex justify-between items-start w-full">
-                      {/* Floating Info Panel - Hidden on very small screens */}
+                      {/* Floating Info Panel - Hidden on small mobile */}
                       <motion.div 
                         initial={{ opacity: 0, x: -20 }}
                         animate={{ opacity: 1, x: 0 }}
-                        className="glass-panel p-4 sm:p-6 rounded-3xl w-60 sm:w-72 pointer-events-auto shadow-2xl hidden xs:block"
+                        className="glass-panel p-4 sm:p-6 rounded-2xl sm:rounded-3xl w-48 sm:w-72 pointer-events-auto shadow-2xl hidden xs:block"
                       >
                         <div className="flex items-center gap-3 mb-2 sm:mb-4">
-                          <Focus size={16} className="text-primary" />
-                          <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant line-clamp-1">Node Analytics</span>
+                          <Focus size={16} className="text-primary shrink-0" />
+                          <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] text-on-surface truncate">Analytical Stream</span>
                         </div>
                         <div className="space-y-3 sm:space-y-4">
                           <div>
-                            <p className="text-[8px] sm:text-[9px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Primary Target</p>
-                            <p className="text-xl sm:text-2xl font-black tracking-widest text-on-surface font-headline uppercase leading-none">
+                            <p className="text-[7px] sm:text-[9px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Last Detection</p>
+                            <p className="text-lg sm:text-3xl font-black tracking-widest text-on-surface font-headline uppercase leading-none truncate">
                               {currentDetections[0]?.plate || '-- --- --'}
                             </p>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="text-[8px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Status</p>
-                              <p className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${
-                                currentDetections[0]?.status === 'Valid' ? 'bg-tertiary-container/10 text-tertiary shadow-sm' :
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-[7px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Status</p>
+                              <p className={`text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded-md truncate ${
+                                currentDetections[0]?.status === 'Valid' ? 'bg-tertiary-container/30 text-tertiary shadow-sm' :
                                 currentDetections[0]?.status === 'Low Confidence' ? 'bg-amber-100 text-amber-700' :
                                 'bg-error-container text-error'
                               }`}>
-                                {currentDetections[0]?.status || 'Idle'}
+                                {currentDetections[0]?.status || 'Scanning'}
                               </p>
                             </div>
-                            <div className="text-right">
-                              <p className="text-[8px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Conf</p>
+                            <div className="text-right shrink-0">
+                              <p className="text-[7px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Conf</p>
                               <p className="text-[12px] sm:text-sm font-black text-primary font-headline">{currentDetections[0]?.confidence ? `${Math.round(currentDetections[0]?.confidence * 100)}%` : '0%'}</p>
                             </div>
-                          </div>
-                          <div className="pt-2 border-t border-outline-variant/10">
-                            <p className="text-[8px] font-black uppercase tracking-widest text-on-surface-variant mb-1 leading-none opacity-60">Intelligence</p>
-                            <p className="text-[10px] sm:text-xs font-bold text-on-surface truncate tracking-tight uppercase">
-                              {currentDetections[0]?.make || 'Spectral Scan...'} {currentDetections[0]?.model || ''}
-                            </p>
                           </div>
                         </div>
                       </motion.div>
@@ -1078,21 +1106,21 @@ export default function LiveView() {
             </div>
 
             {/* Primary Actions */}
-            <div className="px-10 py-8 border-t border-outline-variant/10 bg-surface-container-lowest relative z-20">
-              {/* Lens & Preset Control - Only visible when camera is active */}
+            <div className="px-6 sm:px-10 py-6 sm:py-8 border-t border-outline-variant/10 bg-surface-container-lowest relative z-20">
+              {/* Lens & Preset Control - Adjusted for mobile */}
               <AnimatePresence>
                 {isDetecting && (
                   <motion.div 
                     initial={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    animate={{ opacity: 1, height: 'auto', marginBottom: 32 }}
+                    animate={{ opacity: 1, height: 'auto', marginBottom: 24 }}
                     exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    className="flex flex-col md:flex-row items-center gap-10 overflow-hidden"
+                    className="space-y-6 sm:space-y-0 sm:flex sm:items-center sm:gap-10 overflow-hidden"
                   >
                     <div className="flex-1 w-full space-y-4">
                       <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
                         <span className="flex items-center gap-2">
                            <Maximize2 size={14} className="text-primary" />
-                           Digital Zoom ({zoom.toFixed(1)}x)
+                           Zoom ({zoom.toFixed(1)}x)
                         </span>
                       </div>
                       <input 
@@ -1110,7 +1138,7 @@ export default function LiveView() {
                       <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-on-surface-variant">
                         <span className="flex items-center gap-2">
                            <Focus size={14} className="text-primary" />
-                           Image Smoothness ({focus}px)
+                           Focus ({focus}px)
                         </span>
                       </div>
                       <input 
@@ -1123,91 +1151,66 @@ export default function LiveView() {
                         className="w-full h-1.5 bg-surface-container-high rounded-full appearance-none cursor-pointer accent-primary"
                       />
                     </div>
-
-                    <div className="flex-shrink-0 flex items-center gap-3">
-                      <button 
-                        onClick={addPreset}
-                        className="flex flex-col items-center justify-center w-12 h-12 rounded-2xl bg-surface-container-high border border-outline-variant/10 text-on-surface-variant hover:text-primary transition-all active:scale-95"
-                        title="Save Preset"
-                      >
-                        <Save size={18} />
-                      </button>
-                      <div className="h-10 w-px bg-outline-variant/20 mx-1" />
-                      <div className="flex gap-2">
-                        {settings.cameraPresets.map(preset => (
-                          <button
-                            key={preset.id}
-                            onClick={() => applyPreset(preset)}
-                            className="px-4 py-2 bg-surface-container-low border border-outline-variant/10 rounded-xl text-[9px] font-black uppercase tracking-widest text-on-surface-variant hover:border-primary/50 hover:text-primary transition-all whitespace-nowrap"
-                          >
-                            {preset.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>
 
-              {/* Action Divider */}
-              <div className="h-px w-full bg-outline-variant/10 mb-8" />
-
-              <div className="flex flex-wrap items-center justify-center gap-4 w-full">
+              <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4 w-full">
                 {isDetecting ? (
                   <>
                     <button 
                       onClick={stopCamera}
-                      className="px-6 py-4.5 bg-error-container text-error hover:opacity-90 border border-error/10 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 min-w-[160px]"
+                      className="px-5 py-4 bg-error-container text-error border border-error/10 rounded-2xl sm:rounded-3xl text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 sm:gap-3 transition-all active:scale-95 flex-1 min-w-[140px]"
                     >
-                      <StopCircle size={18} />
-                      Stop Sensor
+                      <StopCircle size={16} className="sm:w-[18px] sm:h-[18px]" />
+                      Stop
                     </button>
                     <button 
                       onClick={handleCapture}
-                      className="px-6 py-4.5 bg-on-surface text-surface hover:opacity-90 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all shadow-md active:scale-95 min-w-[160px]"
+                      className="px-5 py-4 bg-on-surface text-surface rounded-2xl sm:rounded-3xl text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 sm:gap-3 transition-all shadow-md active:scale-95 flex-1 min-w-[140px]"
                     >
-                      <Camera size={18} />
+                      <Camera size={16} className="sm:w-[18px] sm:h-[18px]" />
                       Capture
                     </button>
                   </>
                 ) : (
                   <button 
                     onClick={startCamera}
-                    className="signature-gradient text-white px-8 py-4.5 rounded-3xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/20 flex items-center justify-center gap-3 active:scale-95 transition-all group min-w-[200px]"
+                    className="signature-gradient text-white px-8 py-5 rounded-2xl sm:rounded-3xl font-black text-[10px] uppercase tracking-widest translate-z-0 shadow-lg shadow-primary/20 flex items-center justify-center gap-3 active:scale-95 transition-all group w-full sm:w-auto min-w-[240px]"
                   >
                     <Video size={18} className="group-hover:scale-110 transition-transform" />
-                    Start Live Camera
+                    Start Camera Nodes
                   </button>
                 )}
                 
                 <button 
                   onClick={handleFileUpload}
-                  className="px-8 py-4.5 bg-surface-container-high text-on-surface hover:bg-surface-container-highest border border-outline-variant/10 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-3 transition-all active:scale-95 min-w-[180px]"
+                  className="px-6 py-4 bg-surface-container-high text-on-surface border border-outline-variant/10 rounded-2xl sm:rounded-3xl text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 sm:gap-3 transition-all active:scale-95 w-full sm:w-auto min-w-[200px]"
                 >
-                  <CloudUpload size={18} />
-                  Upload & Batch Process
+                  <CloudUpload size={16} className="sm:w-[18px] sm:h-[18px]" />
+                  Process Payload
                 </button>
 
                 <button 
                   onClick={isDetecting ? handleCaptureAndDetect : (isQueueRunning ? () => setIsQueueRunning(false) : handleManualDetect)}
                   disabled={(isProcessing || isProcessingQueue) || (!isDetecting && !uploadedImage && uploadQueue.length === 0)}
-                  className={`px-10 py-4.5 rounded-3xl text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-3 min-w-[200px] ${
+                  className={`px-6 py-4 rounded-2xl sm:rounded-3xl text-[9px] sm:text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2 sm:gap-3 w-full sm:w-auto min-w-[220px] ${
                     (isProcessing || isProcessingQueue) 
-                      ? 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed' 
+                      ? 'bg-surface-container-highest text-on-surface-variant cursor-not-allowed border border-outline-variant/10' 
                       : (isDetecting || uploadedImage || uploadQueue.length > 0)
                         ? (isQueueRunning ? 'bg-amber-500 text-white shadow-amber-500/20' : 'bg-primary text-white hover:opacity-90 shadow-primary/20')
-                        : 'bg-surface-container-low text-on-surface-variant/40 cursor-not-allowed border border-outline-variant/5'
+                        : 'bg-surface-container-low text-on-surface-variant/30 cursor-not-allowed border border-outline-variant/5'
                   }`}
                 >
                   {(isProcessing || isProcessingQueue) ? (
-                    <div className="flex items-center gap-3 justify-center">
+                    <div className="flex items-center gap-2 justify-center">
                       <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      <span>Processing</span>
+                      <span>Analyzing</span>
                     </div>
                   ) : (
                     <>
-                      {isQueueRunning ? <StopCircle size={18} /> : <ScanEye size={18} />}
-                      <span>{isQueueRunning ? 'Pause Queue' : 'Start Detection'}</span>
+                      {isQueueRunning ? <StopCircle size={16} /> : <ScanEye size={16} />}
+                      <span>{isQueueRunning ? 'Abort Batch' : 'Initiate Scan'}</span>
                     </>
                   )}
                 </button>
@@ -1437,11 +1440,11 @@ export default function LiveView() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-surface-container-low/50">
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Record ID</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Picture Details</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden md:table-cell">Record ID</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Vehicle Details</th>
                 <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">License Plate</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Region</th>
-                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Confidence</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden lg:table-cell">Region</th>
+                <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden sm:table-cell">Confidence</th>
                 <th className="px-6 py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Status</th>
               </tr>
             </thead>
@@ -1449,30 +1452,33 @@ export default function LiveView() {
               {liveDetections.length > 0 ? (
                 liveDetections.map((row, i) => (
                   <tr key={row.id || i} className="hover:bg-surface-container-low transition-colors group">
-                    <td className="px-6 py-4 text-[11px] font-mono font-bold text-on-surface-variant">#{String(row.id || '').slice(-6).toUpperCase() || 'UNKSYS'}</td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 text-[11px] font-mono font-bold text-on-surface-variant hidden md:table-cell selection:bg-primary selection:text-white">#{String(row.id || '').slice(-6).toUpperCase() || 'UNKSYS'}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-8 bg-black rounded border border-outline-variant/10 overflow-hidden shrink-0">
+                        <div className="w-10 h-7 sm:w-12 sm:h-8 bg-black rounded border border-outline-variant/10 overflow-hidden shrink-0">
                           {row.image_url || row.image ? (
                             <img src={row.image_url || row.image} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center bg-surface-container-low">
-                               <Car size={12} className="text-outline-variant opacity-20" />
+                               <Car size={10} className="text-outline-variant opacity-20" />
                             </div>
                           )}
                         </div>
-                        <span className="text-[10px] font-bold text-on-surface uppercase truncate max-w-[120px]">{row.make || 'Vehicle'} {row.model || ''}</span>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-bold text-on-surface uppercase truncate max-w-[80px] sm:max-w-[120px] leading-tight">{row.make || 'Vehicle'}</span>
+                          <span className="text-[8px] font-medium text-on-surface-variant/60 uppercase">{row.model || 'Unknown'}</span>
+                        </div>
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className="px-3 py-1 bg-on-surface text-surface rounded-lg font-headline font-black text-sm tracking-widest">
+                      <span className="inline-block px-2 sm:px-3 py-1 bg-on-surface text-surface rounded sm:rounded-lg font-headline font-black text-[11px] sm:text-sm tracking-widest shadow-sm">
                         {row.plate}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase">{row.location || 'Entrance A'}</td>
-                    <td className="px-6 py-4">
+                    <td className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase hidden lg:table-cell">{row.location || 'Entrance A'}</td>
+                    <td className="px-6 py-4 hidden sm:table-cell">
                       <div className="flex items-center gap-2">
-                        <div className="w-12 h-1 bg-surface-container-high rounded-full overflow-hidden">
+                        <div className="w-12 h-1 bg-surface-container-high rounded-full overflow-hidden hidden xl:block">
                           <div 
                             className={`h-full ${row.confidence > 0.8 ? 'bg-primary' : row.confidence > 0.5 ? 'bg-amber-500' : 'bg-error'}`}
                             style={{ width: `${(row.confidence || 0) * 100}%` }}
@@ -1482,10 +1488,10 @@ export default function LiveView() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                        row.status === 'Valid' ? 'bg-primary/10 text-primary' : 
-                        row.status === 'Low Confidence' ? 'bg-amber-500/10 text-amber-600' : 
-                        'bg-error/10 text-error'
+                      <span className={`inline-flex items-center px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest ${
+                        row.status === 'Valid' ? 'bg-primary/10 text-primary border border-primary/10' : 
+                        row.status === 'Low Confidence' ? 'bg-amber-500/10 text-amber-600 border border-amber-500/10' : 
+                        'bg-error/10 text-error border border-error/10'
                       }`}>
                         {row.status || 'Scanned'}
                       </span>

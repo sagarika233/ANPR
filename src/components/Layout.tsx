@@ -38,6 +38,8 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
   ]);
   const [hasUnread, setHasUnread] = useState(false);
 
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
   React.useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const socket = new WebSocket(`${protocol}//${window.location.host}`);
@@ -74,6 +76,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
     { id: 'history', label: 'History', icon: History },
     { id: 'alerts', label: 'Alert Rules', icon: BellRing },
     { id: 'health', label: 'System Health', icon: Activity },
+    { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
   const handleNewSearch = (e: React.FormEvent) => {
@@ -84,69 +87,108 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
     }
   };
 
-  return (
-    <div className="min-h-screen flex flex-col bg-surface overflow-x-hidden">
-      {/* Navigation Drawer (Desktop) */}
-      <aside className="hidden md:flex h-screen w-64 fixed left-0 top-0 z-50 bg-surface-container-low flex-col overflow-y-auto pt-8 pb-4 border-r border-outline-variant/10">
-        <div className="px-8 mb-10">
+  const SidebarContent = () => (
+    <>
+      <div className="px-8 mb-10 flex items-center justify-between">
+        <div>
           <h2 className="text-xl font-black tracking-tighter text-on-surface font-headline uppercase leading-none">
             Vigilant <span className="text-primary group-hover:text-primary-container transition-colors">ALPR</span>
           </h2>
-          <p className="text-[10px] font-bold text-outline uppercase tracking-[0.3em] mt-2">Smart Plate System</p>
+          <p className="text-[10px] font-bold text-outline uppercase tracking-[0.3em] mt-2 text-on-surface-variant/60">Smart Plate System</p>
         </div>
-        <nav className="flex-1 px-4 space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className={`w-full flex items-center gap-3 px-6 py-3.5 rounded-2xl transition-all duration-300 group ${
-                activeTab === item.id 
-                  ? 'text-primary bg-surface-container shadow-sm' 
-                  : 'text-secondary hover:text-on-surface hover:bg-surface-container-high/40'
-              }`}
+        <button className="md:hidden p-2 hover:bg-surface-container rounded-full" onClick={() => setIsSidebarOpen(false)}>
+          <X size={20} className="text-on-surface-variant" />
+        </button>
+      </div>
+      <nav className="flex-1 px-4 space-y-1">
+        {navItems.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => {
+              setActiveTab(item.id);
+              setIsSidebarOpen(false);
+            }}
+            className={`w-full flex items-center gap-3 px-6 py-3.5 rounded-2xl transition-all duration-300 group ${
+              activeTab === item.id 
+                ? 'text-primary bg-primary/10 shadow-sm border border-primary/10' 
+                : 'text-secondary hover:text-on-surface hover:bg-surface-container-high/40'
+            }`}
+          >
+            <item.icon 
+              size={18} 
+              className={activeTab === item.id ? 'text-primary animate-pulse-slow' : 'text-secondary group-hover:text-on-surface transition-colors'} 
+            />
+            <span className="font-headline text-[11px] uppercase tracking-[0.12em] font-bold">
+              {item.label}
+            </span>
+          </button>
+        ))}
+      </nav>
+      <div className="px-6 py-6 mt-auto">
+        <div className="flex items-center gap-2 px-3 py-2 bg-tertiary-container/10 rounded-lg border border-tertiary/10">
+          <div className="pulse-dot"></div>
+          <span className="text-[10px] font-bold text-tertiary tracking-wider uppercase">System Secured</span>
+        </div>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="min-h-screen flex flex-col bg-surface overflow-x-hidden">
+      {/* Mobile Sidebar Overlay */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSidebarOpen(false)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] md:hidden"
+            />
+            <motion.aside 
+              initial={{ x: -300 }}
+              animate={{ x: 0 }}
+              exit={{ x: -300 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="fixed left-0 top-0 h-screen w-[280px] z-[70] bg-surface-container-low flex flex-col pt-8 pb-4 border-r border-outline-variant/10 shadow-2xl md:hidden"
             >
-              <item.icon 
-                size={18} 
-                className={activeTab === item.id ? 'text-primary' : 'text-secondary group-hover:text-on-surface transition-colors'} 
-              />
-              <span className="font-headline text-[11px] uppercase tracking-[0.12em] font-bold">
-                {item.label}
-              </span>
-            </button>
-          ))}
-        </nav>
-        <div className="px-6 py-6 mt-auto">
-          <div className="flex items-center gap-2 px-3 py-2 bg-tertiary-container/10 rounded-lg">
-            <div className="pulse-dot"></div>
-            <span className="text-[10px] font-bold text-tertiary tracking-wider uppercase">System Online</span>
-          </div>
-        </div>
+              <SidebarContent />
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Navigation Drawer (Desktop) */}
+      <aside className="hidden md:flex h-screen w-64 fixed left-0 top-0 z-50 bg-surface-container-low flex-col overflow-y-auto pt-8 pb-4 border-r border-outline-variant/10">
+        <SidebarContent />
       </aside>
 
       {/* Main Content Area */}
-      <main className="md:ml-64 flex-1 flex flex-col min-h-screen relative">
+      <main className="md:ml-64 flex-1 flex flex-col min-h-screen relative transition-all duration-300">
         {/* TopAppBar */}
-        <header className="sticky top-0 z-40 w-full bg-surface-container-lowest/85 backdrop-blur-xl shadow-[0px_1px_0px_rgba(25,28,29,0.06)] flex items-center justify-between px-4 sm:px-6 h-16 transition-all duration-300">
-          <div className="flex items-center gap-2 sm:gap-4 shrink-0 min-w-0">
+        <header className="sticky top-0 z-50 w-full bg-surface-container-lowest/80 backdrop-blur-2xl border-b border-outline-variant/5 flex items-center justify-between px-4 sm:px-8 h-18">
+          <div className="flex items-center gap-3 shrink-0 min-w-0">
             <button 
-              className="md:hidden p-2 hover:bg-surface-container rounded-full transition-colors shrink-0"
-              onClick={() => setActiveTab('dashboard')}
+              className="md:hidden p-2.5 bg-surface-container-high/50 hover:bg-surface-container rounded-xl transition-all active:scale-95"
+              onClick={() => setIsSidebarOpen(true)}
             >
               <Menu size={20} className="text-on-surface" />
             </button>
-            <div className="flex items-baseline gap-2 sm:gap-4 min-w-0">
-              <h1 className="text-base sm:text-lg font-bold tracking-tighter text-on-surface font-headline leading-none truncate shrink-0">Vigilant ALPR</h1>
-              <span className="hidden md:block text-[10px] font-bold text-on-surface-variant uppercase tracking-widest leading-none shrink-0 opacity-70">v2.4</span>
+            <div className="flex items-baseline gap-3 min-w-0 overflow-hidden">
+              <h1 className="text-lg sm:text-xl font-black tracking-tighter text-on-surface font-headline leading-none truncate">
+                {navItems.find(i => i.id === activeTab)?.label || 'Vigilant'}
+              </h1>
             </div>
           </div>
 
-          <div className="flex-1 max-w-sm mx-4 sm:mx-8 hidden lg:block min-w-0">
-            <div className="relative flex items-center group">
-              <Search className="absolute left-3 text-outline group-focus-within:text-primary transition-colors" size={18} />
+          <div className="flex-1 max-w-md mx-8 hidden lg:block">
+            <div className="relative group/search">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-outline group-focus-within/search:text-primary transition-colors" size={18} />
               <input 
                 type="text" 
-                placeholder="Search plate intelligence..." 
-                className="w-full bg-surface-container-high/50 border-none focus:ring-1 focus:ring-primary/20 text-sm py-2 pl-10 pr-4 rounded-xl shadow-inner placeholder:text-outline-variant font-medium transition-all"
+                placeholder="Query database..." 
+                className="w-full bg-surface-container-high/40 border border-transparent focus:border-primary/20 focus:bg-surface-container-high text-sm py-2.5 pl-11 pr-4 rounded-2xl transition-all placeholder:text-on-surface-variant/40"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleNewSearch(e)}
@@ -154,25 +196,31 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
             </div>
           </div>
 
-          <div className="flex items-center gap-0.5 sm:gap-4 shrink-0 ml-auto">
+          <div className="flex items-center gap-2 sm:gap-4 ml-auto">
             <button 
               onClick={() => setShowNewSearch(true)}
-              className="lg:hidden p-1.5 sm:p-2 hover:bg-surface-container rounded-full transition-colors shrink-0"
+              className="lg:hidden p-2.5 hover:bg-surface-container rounded-xl transition-all text-on-surface-variant active:scale-95"
             >
-              <Search size={18} className="text-primary sm:w-5 sm:h-5" />
+              <Search size={20} />
             </button>
             
             <button 
               onClick={handleToggleNotifications}
-              className="p-1.5 sm:p-2 hover:bg-surface-container rounded-full transition-colors relative shrink-0"
+              className="p-2.5 bg-surface-container-high/30 hover:bg-surface-container rounded-xl transition-all relative active:scale-95"
             >
-              <Bell size={18} className={(hasUnread ? "text-primary" : "text-secondary") + " sm:w-5 sm:h-5"} />
+              <Bell size={20} className={hasUnread ? "text-primary fill-primary/10" : "text-on-surface-variant"} />
               {hasUnread && (
-                <span className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-error rounded-full border-2 border-surface-container-lowest animate-pulse"></span>
+                <span className="absolute top-2.5 right-2.5 w-2.5 h-2.5 bg-error rounded-full border-2 border-surface-container-lowest animate-pulse"></span>
               )}
             </button>
 
-
+            <div className="h-8 w-px bg-outline-variant/10 mx-1 hidden sm:block" />
+            
+            <button className="hidden sm:flex items-center gap-3 pl-2 pr-1 py-1 rounded-full hover:bg-surface-container transition-all group">
+              <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-primary border border-primary/20 overflow-hidden shadow-inner font-bold text-sm">
+                <User size={18} />
+              </div>
+            </button>
           </div>
           
           {/* Notifications Popover (Repositioned for the new header) */}
