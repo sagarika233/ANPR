@@ -2,9 +2,10 @@
  * Resizes an image to a maximum dimension while maintaining aspect ratio.
  * @param base64Image The source image in base64 format.
  * @param maxDimension The maximum width or height.
+ * @param quality JPEG quality from 0 to 1.
  * @returns A promise that resolves to the resized base64 image.
  */
-export const resizeImage = async (base64Image: string, maxDimension = 1280): Promise<string> => {
+export const resizeImage = async (base64Image: string, maxDimension = 1024, quality = 0.6): Promise<string> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -33,7 +34,7 @@ export const resizeImage = async (base64Image: string, maxDimension = 1280): Pro
       }
 
       ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.5));
+      resolve(canvas.toDataURL('image/jpeg', quality));
     };
     img.onerror = reject;
     img.src = base64Image;

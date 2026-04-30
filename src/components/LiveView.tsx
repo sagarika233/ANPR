@@ -261,8 +261,12 @@ export default function LiveView() {
       }
     };
 
-    if (isQueueRunning && !isProcessingQueue && uploadQueue.some(item => item.status === 'pending')) {
-      processBatch();
+    if (isQueueRunning && !isProcessingQueue) {
+      if (!uploadQueue.some(item => item.status === 'pending')) {
+        setIsQueueRunning(false);
+      } else {
+        processBatch();
+      }
     }
   }, [uploadQueue, isProcessingQueue, isQueueRunning, settings.confidenceThreshold]);
 
@@ -900,14 +904,12 @@ export default function LiveView() {
                               if (!det.bbox) return null;
                               const centerX = det.bbox.x + det.bbox.width / 2;
                               const centerY = det.bbox.y + det.bbox.height / 2;
-                              const isSquare = det.bbox.height / det.bbox.width > 0.5;
-                              const targetRatio = isSquare ? 1.5 : 4.1;
-                              let drawWidth = det.bbox.width;
-                              let drawHeight = det.bbox.width / targetRatio;
-                              if (Math.abs(drawHeight - det.bbox.height) > det.bbox.height * 0.4) {
-                                drawHeight = det.bbox.height;
-                                drawWidth = drawHeight * targetRatio;
-                              }
+                              
+                              // Dynamic padding based on confidence - more stable boxes have tighter fit
+                              const padFactor = det.confidence > 0.9 ? 1.08 : 1.15;
+                              const drawWidth = det.bbox.width * padFactor;
+                              const drawHeight = det.bbox.height * padFactor;
+
                               return (
                                 <motion.div 
                                   key={`${det.plate}-${idx}`}
@@ -916,29 +918,36 @@ export default function LiveView() {
                                     opacity: 1, 
                                     scale: 1,
                                     boxShadow: activeAlerts.some(a => a.plate === det.plate) 
-                                      ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
-                                      : '0 0 30px rgba(37,99,235,0.6)'
+                                      ? ['0 0 15px #ef4444', '0 0 40px #ef4444', '0 0 15px #ef4444'] 
+                                      : '0 0 25px rgba(59,130,246,0.5)'
                                   }}
                                   transition={{ 
                                     boxShadow: { repeat: Infinity, duration: 1.5 }
                                   }}
                                   exit={{ opacity: 0, scale: 0.9 }}
-                                  className={`absolute border-2 rounded-sm transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
+                                  className={`absolute transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
                                     activeAlerts.some(a => a.plate === det.plate)
-                                      ? 'border-error border-[3px] z-50'
-                                      : 'border-blue-500 z-40'
+                                      ? 'border-error border-[2.5px] z-50'
+                                      : 'border-blue-400/80 border-[1.5px] z-40'
                                   }`}
                                   style={{
                                     left: `${(centerX / 1000) * 100}%`,
                                     top: `${(centerY / 1000) * 100}%`,
                                     width: `${(drawWidth / 1000) * 100}%`,
                                     height: `${(drawHeight / 1000) * 100}%`,
+                                    borderRadius: '4px'
                                   }}
                                 >
-                                  <div className={`absolute -top-12 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 ${
+                                  {/* Corner Brackets for Technical Look */}
+                                  <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-inherit rounded-tl-sm" />
+                                  <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-inherit rounded-tr-sm" />
+                                  <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-inherit rounded-bl-sm" />
+                                  <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-inherit rounded-br-sm" />
+
+                                  <div className={`absolute -top-14 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 backdrop-blur-md ${
                                     activeAlerts.some(a => a.plate === det.plate)
-                                      ? 'bg-error animate-pulse'
-                                      : 'signature-gradient'
+                                      ? 'bg-error/90 animate-pulse'
+                                      : 'bg-blue-600/90'
                                   }`}>
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="tracking-[0.2em] uppercase flex items-center gap-1.5">
@@ -985,18 +994,16 @@ export default function LiveView() {
                           {cam.isSelected && (
                             <div className="absolute inset-0 pointer-events-none z-40">
                               <AnimatePresence>
-                                {currentDetections.map((det, idx) => {
-                                  if (!det.bbox) return null;
-                                  const centerX = det.bbox.x + det.bbox.width / 2;
-                                  const centerY = det.bbox.y + det.bbox.height / 2;
-                                  const isSquare = det.bbox.height / det.bbox.width > 0.5;
-                                  const targetRatio = isSquare ? 1.5 : 4.1;
-                                  let drawWidth = det.bbox.width;
-                                  let drawHeight = det.bbox.width / targetRatio;
-                                  if (Math.abs(drawHeight - det.bbox.height) > det.bbox.height * 0.4) {
-                                    drawHeight = det.bbox.height;
-                                    drawWidth = drawHeight * targetRatio;
-                                  }
+                                  {currentDetections.map((det, idx) => {
+                                    if (!det.bbox) return null;
+                                    const centerX = det.bbox.x + det.bbox.width / 2;
+                                    const centerY = det.bbox.y + det.bbox.height / 2;
+                                    
+                                    // Dynamic padding based on confidence
+                                    const padFactor = det.confidence > 0.9 ? 1.08 : 1.15;
+                                    const drawWidth = det.bbox.width * padFactor;
+                                    const drawHeight = det.bbox.height * padFactor;
+
                                     return (
                                       <motion.div 
                                         key={`${det.plate}-${idx}`}
@@ -1005,29 +1012,36 @@ export default function LiveView() {
                                           opacity: 1, 
                                           scale: 1,
                                           boxShadow: activeAlerts.some(a => a.plate === det.plate) 
-                                            ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
-                                            : '0 0 30px rgba(37,99,235,0.6)'
+                                            ? ['0 0 15px #ef4444', '0 0 40px #ef4444', '0 0 15px #ef4444'] 
+                                            : '0 0 25px rgba(59,130,246,0.5)'
                                         }}
                                         transition={{ 
                                           boxShadow: { repeat: Infinity, duration: 1.5 }
                                         }}
                                         exit={{ opacity: 0, scale: 0.9 }}
-                                        className={`absolute border-2 rounded-sm transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
+                                        className={`absolute transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
                                           activeAlerts.some(a => a.plate === det.plate)
-                                            ? 'border-error border-[3px] z-50'
-                                            : 'border-blue-500 z-40'
+                                            ? 'border-error border-[2.5px] z-50'
+                                            : 'border-blue-400/80 border-[1.5px] z-40'
                                         }`}
                                         style={{
                                           left: `${(centerX / 1000) * 100}%`,
                                           top: `${(centerY / 1000) * 100}%`,
                                           width: `${(drawWidth / 1000) * 100}%`,
                                           height: `${(drawHeight / 1000) * 100}%`,
+                                          borderRadius: '4px'
                                         }}
                                       >
-                                        <div className={`absolute -top-12 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 ${
+                                        {/* Corner Brackets for Technical Look */}
+                                        <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-inherit rounded-tl-sm" />
+                                        <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-inherit rounded-tr-sm" />
+                                        <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-inherit rounded-bl-sm" />
+                                        <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-inherit rounded-br-sm" />
+
+                                        <div className={`absolute -top-14 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 backdrop-blur-md ${
                                           activeAlerts.some(a => a.plate === det.plate)
-                                            ? 'bg-error animate-pulse'
-                                            : 'signature-gradient'
+                                            ? 'bg-error/90 animate-pulse'
+                                            : 'bg-blue-600/90'
                                         }`}>
                                           <div className="flex items-center justify-between gap-2">
                                             <span className="tracking-[0.2em] uppercase flex items-center gap-1.5">
@@ -1435,7 +1449,7 @@ export default function LiveView() {
               {liveDetections.length > 0 ? (
                 liveDetections.map((row, i) => (
                   <tr key={row.id || i} className="hover:bg-surface-container-low transition-colors group">
-                    <td className="px-6 py-4 text-[11px] font-mono font-bold text-on-surface-variant">#{row.id?.slice(-6).toUpperCase() || 'UNKSYS'}</td>
+                    <td className="px-6 py-4 text-[11px] font-mono font-bold text-on-surface-variant">#{String(row.id || '').slice(-6).toUpperCase() || 'UNKSYS'}</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-8 bg-black rounded border border-outline-variant/10 overflow-hidden shrink-0">

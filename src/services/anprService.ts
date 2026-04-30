@@ -36,7 +36,8 @@ const hashString = (str: string) => {
 
 const normalizePlate = (rawPlate: string): string => {
   // 1. Basic cleanup: Remove junk and normalize case
-  let plate = rawPlate.replace(/[^A-Z0-9]/g, '').toUpperCase();
+  // Remove "IND" or "INDIA" which are often present on HSRP plates but not part of the registration number
+  let plate = rawPlate.replace(/^INDIA|^IND/i, '').replace(/[^A-Z0-9]/g, '').toUpperCase();
   
   // OCR Correction Maps: Specific to ANPR pitfalls
   const L_TO_D: Record<string, string> = { 
@@ -50,14 +51,31 @@ const normalizePlate = (rawPlate: string): string => {
     '4': 'A', '6': 'G', '7': 'T', '3': 'E', '9': 'P'
   };
   
-  // Official Indian State Codes (HSRP compliant)
-  const stateCodes = ["AN", "AP", "AR", "AS", "BR", "CH", "CT", "DN", "DD", "DL", "GA", "GJ", "HR", "HP", "JK", "JH", "KA", "KL", "LA", "LD", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", "PB", "RJ", "SK", "TN", "TS", "TR", "UP", "UK", "WB"];
+  // Official Indian State Codes (HSRP compliant) including new TG and BH
+  const stateCodes = ["AN", "AP", "AR", "AS", "BR", "CH", "CT", "DN", "DD", "DL", "GA", "GJ", "HR", "HP", "JK", "JH", "KA", "KL", "LA", "LD", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", "PB", "RJ", "SK", "TN", "TS", "TR", "UP", "UK", "WB", "BH", "TG"];
 
   const correctCharacters = (str: string, map: Record<string, string>) => 
     str.split('').map(char => map[char] || char).join('');
 
-  // Indian Standard: SS DD CC NNNN (e.g., MH 12 AB 1234)
+  // 1. Detect Bharat (BH) Series: YY BH #### XX (e.g., 22 BH 1234 AA)
+  if (plate.length >= 9) {
+    const bhMatch = plate.match(/^([0-9ZSLIBGQT]{2})([B8][H])([0-9OIZSBGQT]{4})([A-Z0-9]{1,2})$/i);
+    if (bhMatch) {
+      const year = correctCharacters(bhMatch[1], L_TO_D);
+      const bh = "BH";
+      const number = correctCharacters(bhMatch[3], L_TO_D);
+      const category = bhMatch[4].split('').map(c => isNaN(Number(c)) ? c : D_TO_L[c] || c).join('');
+      return `${year} ${bh} ${number} ${category}`;
+    }
+  }
+
+  // 2. Standard Indian Standard: SS DD AA NNNN (e.g., MH 12 AB 1234)
   if (plate.length >= 7) {
+    // If it starts with IND (sometimes first cleaning might miss if stuck to the plate)
+    if (plate.startsWith('IND')) {
+      plate = plate.substring(3);
+    }
+
     // Step 1: Standardize State (Must be Alpha)
     let state = correctCharacters(plate.substring(0, 2), D_TO_L);
     if (!stateCodes.includes(state)) {
@@ -107,7 +125,7 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
     const isImageBlurry = blurScore < 250; 
     
     // Manage payload size for browser stability and enhance for OCR
-    const resizedOriginal = await resizeImage(base64Image, 800); 
+    const resizedOriginal = await resizeImage(base64Image, 1024, 0.6); 
     const sharpened = await sharpenImage(resizedOriginal);
     const contrastEnhanced = await enhanceContrast(sharpened);
     const adaptive = await adaptiveThresholding(contrastEnhanced);
@@ -147,23 +165,24 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
             
             CORE MISSION: Extract license plates from any input, specifically optimized for:
             1. MOTION BLUR: Compensation for fast-moving vehicles.
-            2. SEMI-BLUR/FOG: Advanced contrast-aware edge reconstruction using the provided Adaptive Threshold and Enhanced exposures.
+            2. SEMI-BLUR/FOG: Advanced contrast-aware edge reconstruction.
             3. LOW RESOLUTION: Sub-pixel character inference.
+            
+            CRITICAL - INDIAN PLATE RULES:
+            - Target: Indian High Security Registration Plates (HSRP).
+            - Format: StateCode (2 Alpha) + District (2 Digits) + Category (1-2 Alpha) + Number (4 Digits).
+            - Example: MH 12 AB 1234, DL 3C AF 5678.
+            - IGNORE 'IND' or 'INDIA' text which is usually on the left side in small blue font. 
+            - IGNORE any logos or holograms.
+            - Focus strictly on the large black characters.
             
             STAGE 1: NEURAL SEARCH & SEGMENTATION
             - Use the TRIPLE-input stream (Original + AI-Enhanced Edge Contrast + Adaptive Binary).
-            - Execute YOLO-style scanning to localize all vehicles.
-            - Extract license plate ROIs with sub-millimeter precision. Bounding boxes MUST be strictly character-aligned.
+            - Localize all vehicles and then the exact license plate ROI.
             
-            STAGE 2: OCR UNDER EXTREME CONDITIONS (BLUR/SMUDGE)
-            - Target: Indian Standard HSRP plates (High Security Registration Plates).
-            - Logical Inference: If a character is partially obscured by blur, use standard patterns (SS DD CC NNNN) to infer the most probable character.
-            - Comparison: Use the Adaptive Binary frame to isolate character shapes from the semi-blurry background.
-            
-            STAGE 3: CONFIDENCE SCORING
-            - 'Valid': Confident match (>0.90).
-            - 'Low Confidence': Readable but slightly ambiguous due to semi-blur (0.75-0.90).
-            - 'Blurry Image': Severely impacted but attempted (0.50-0.75).
+            STAGE 2: OCR UNDER EXTREME CONDITIONS
+            - If a character is partially obscured, use the SS DD CC NNNN pattern to infer.
+            - 'O' vs '0', 'I' vs '1', 'S' vs '5' must be disambiguated by position (e.g., pos 3-4 must be digits).
             
             OUTPUT SCHEMA (JSON ONLY):
             - detections: [{ plate, confidence, status, make, model, vehicle_type, bbox: {x,y,w,h}, is_blurry }]`,
