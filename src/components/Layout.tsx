@@ -4,7 +4,6 @@ import {
   Video, 
   BarChart3, 
   History, 
-  Settings, 
   Bell, 
   HelpCircle, 
   Search,
@@ -14,12 +13,10 @@ import {
   CheckCircle2,
   Info,
   Menu,
-  User,
   BellRing,
   Activity,
   LayoutDashboard
 } from 'lucide-react';
-import { useSettings } from '../context/SettingsContext';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -76,7 +73,6 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
     { id: 'history', label: 'History', icon: History },
     { id: 'alerts', label: 'Alert Rules', icon: BellRing },
     { id: 'health', label: 'System Health', icon: Activity },
-    { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
   const handleNewSearch = (e: React.FormEvent) => {
@@ -214,13 +210,6 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
               )}
             </button>
 
-            <div className="h-6 w-px bg-outline-variant/10 mx-1 hidden sm:block" />
-            
-            <button className="hidden sm:flex items-center gap-3 pl-2 pr-1 py-1 rounded-full hover:bg-surface-container transition-all group">
-              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary border border-primary/20 overflow-hidden shadow-inner font-bold text-xs">
-                <User size={16} />
-              </div>
-            </button>
           </div>
           
           {/* Notifications Popover (Repositioned for the new header) */}
@@ -276,7 +265,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
 
         {/* Mobile Bottom NavBar */}
         <nav className="md:hidden sticky bottom-0 z-50 bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 flex items-center justify-around h-16 w-full px-2">
-          {navItems.slice(0, 5).map((item) => (
+          {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}

@@ -271,10 +271,14 @@ export default function LiveView() {
   }, [uploadQueue, isProcessingQueue, isQueueRunning, settings.confidenceThreshold]);
 
   // Real-time Detection Loop
+  const isDectectingCurrentRef = useRef(false);
+
   useEffect(() => {
     let interval: number | null = null;
 
     const runDetection = async () => {
+      if (isDectectingCurrentRef.current) return;
+      
       const activeCam = activeCameras.find(c => c.isSelected) || activeCameras[0];
       if (activeCam?.videoRef.current && canvasRef.current) {
         const canvas = canvasRef.current;
@@ -282,20 +286,14 @@ export default function LiveView() {
         const context = canvas.getContext('2d');
         
         if (context && video.videoWidth > 0) {
+          isDectectingCurrentRef.current = true;
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
           
           let base64Image = canvas.toDataURL('image/jpeg', 0.8);
 
-          // Apply Advanced Filters before ANPR
           try {
-            if (settings.imageFilters.noiseReduction) base64Image = await noiseReduction(base64Image);
-            if (settings.imageFilters.sharpen) base64Image = await sharpenImage(base64Image);
-            if (settings.imageFilters.enhanceContrast) base64Image = await enhanceContrast(base64Image);
-            if (settings.imageFilters.adaptiveThreshold) base64Image = await adaptiveThresholding(base64Image);
-            else if (settings.imageFilters.binarize) base64Image = await binarizeImage(base64Image);
-            
             const results = await detectPlate(base64Image);
             setQuotaUsed(prev => prev + 1);
             
@@ -307,20 +305,17 @@ export default function LiveView() {
               
               const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
               
-              // Enriched vehicle status
               for (const det of validDetections) {
-                // Remove registry enrichment per user request (Privacy focus)
                 await saveDetectionToBackend({ ...det, image: base64Image });
               }
 
               if (validDetections.length > 0) {
                 setCurrentDetections(validDetections);
                 
-                // Clear detection overlay after 4 seconds to ensure it stays visible until next pass
+                // Clear detection overlay after 4 seconds
                 setTimeout(() => setCurrentDetections([]), 4000);
               }
             } else {
-              // No detections is fine, just continue
               setHasNetworkError(false);
             }
           } catch (error: any) {
@@ -330,6 +325,8 @@ export default function LiveView() {
             } else {
               setHasNetworkError(true);
             }
+          } finally {
+            isDectectingCurrentRef.current = false;
           }
         }
       }
@@ -338,8 +335,8 @@ export default function LiveView() {
     if (isDetecting && !isInitializing && !isCoolingDown) {
       // Run immediately
       runDetection();
-      // Then set interval
-      interval = window.setInterval(runDetection, 10000);
+      // Then set interval - Decreased to 3s for "Correct & Fast" results
+      interval = window.setInterval(runDetection, 3000);
       detectionIntervalRef.current = interval;
     } else {
       if (detectionIntervalRef.current) {
@@ -768,7 +765,7 @@ export default function LiveView() {
             <div className="px-4 sm:px-8 py-3 sm:py-5 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-3 sm:gap-0">
               <div className="flex flex-wrap items-center gap-3 sm:gap-5 min-w-0">
                 <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${isDetecting ? 'bg-primary animate-pulse' : 'bg-outline-variant'}`}></div>
-                <h3 className="text-xs sm:text-lg font-black text-on-surface tracking-tighter uppercase whitespace-nowrap overflow-hidden text-ellipsis">SURV-ALPHA-NOD</h3>
+                <h3 className="text-xs sm:text-lg font-black text-on-surface tracking-tighter uppercase whitespace-nowrap overflow-hidden text-ellipsis">LIVE FEED - CAM 01</h3>
                 <span className="text-[7px] sm:text-[10px] text-primary font-black uppercase tracking-[0.2em] px-2 sm:px-3 py-1 bg-primary-container/10 rounded-full border border-primary/5 shrink-0">
                   {isDetecting ? 'Live' : 'Standby'}
                 </span>
@@ -828,13 +825,13 @@ export default function LiveView() {
                     <CameraOff size={40} className="text-outline-variant sm:w-20 sm:h-20" strokeWidth={1} />
                     <div className="absolute inset-x-0 -bottom-3 sm:-bottom-5 flex justify-center">
                       <div className="px-3 py-1 bg-surface-container-lowest border border-outline-variant/20 rounded-full shadow-sm text-[8px] sm:text-[10px] font-black text-on-surface-variant uppercase tracking-wider">
-                        Sensor Idle
+                        Ready to Scan
                       </div>
                     </div>
                   </div>
-                  <h4 className="text-lg sm:text-3xl font-black text-on-surface mb-3 tracking-tighter uppercase whitespace-nowrap">Node Standby</h4>
+                  <h4 className="text-lg sm:text-3xl font-black text-on-surface mb-3 tracking-tighter uppercase whitespace-nowrap">Camera Ready</h4>
                   <p className="text-[10px] sm:text-sm text-on-surface-variant max-w-[240px] sm:max-w-md font-medium leading-relaxed opacity-60 uppercase tracking-tight">
-                    Initialize sensor or provide analytical payload to commence automated surveillance logging.
+                    Start the camera or upload an image to begin automatic plate detection and logging.
                   </p>
                 </div>
               ) : (
@@ -878,7 +875,7 @@ export default function LiveView() {
                       >
                         <div className="flex items-center gap-3 mb-2 sm:mb-4">
                           <Focus size={16} className="text-primary shrink-0" />
-                          <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] text-on-surface truncate">Analytical Stream</span>
+                          <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] text-on-surface truncate">Live Analytics</span>
                         </div>
                         <div className="space-y-3 sm:space-y-4">
                           <div>
@@ -930,67 +927,75 @@ export default function LiveView() {
                           <AnimatePresence>
                             {currentDetections.map((det, idx) => {
                               if (!det.bbox) return null;
+                              
+                              const aspectRatio = det.bbox.width / det.bbox.height;
                               const centerX = det.bbox.x + det.bbox.width / 2;
                               const centerY = det.bbox.y + det.bbox.height / 2;
                               
-                              // Dynamic padding based on confidence - more stable boxes have tighter fit
-                              const padFactor = det.confidence > 0.9 ? 1.08 : 1.15;
-                              const drawWidth = det.bbox.width * padFactor;
-                              const drawHeight = det.bbox.height * padFactor;
+                              // Dynamic Sizing: Harmonize with standard HSRP aspect ratios
+                              // Long: 4.1, Short/Motorcycle: 1.7
+                              const isLong = aspectRatio > 3.0;
+                              const pad = det.confidence > 0.95 ? 1.04 : 1.08;
+                              
+                              const drawWidth = det.bbox.width * pad;
+                              const drawHeight = det.bbox.height * pad;
 
                               return (
                                 <motion.div 
                                   key={`${det.plate}-${idx}`}
-                                  initial={{ opacity: 0, scale: 0.9 }}
+                                  initial={{ opacity: 0, scale: 0.98 }}
                                   animate={{ 
                                     opacity: 1, 
                                     scale: 1,
                                     boxShadow: activeAlerts.some(a => a.plate === det.plate) 
-                                      ? ['0 0 15px #ef4444', '0 0 40px #ef4444', '0 0 15px #ef4444'] 
-                                      : '0 0 25px rgba(59,130,246,0.5)'
+                                      ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
+                                      : '0 0 15px rgba(59,130,246,0.25)'
                                   }}
                                   transition={{ 
                                     boxShadow: { repeat: Infinity, duration: 1.5 }
                                   }}
-                                  exit={{ opacity: 0, scale: 0.9 }}
+                                  exit={{ opacity: 0, scale: 0.98 }}
                                   className={`absolute transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
                                     activeAlerts.some(a => a.plate === det.plate)
-                                      ? 'border-error border-[2.5px] z-50'
-                                      : 'border-blue-400/80 border-[1.5px] z-40'
+                                      ? 'border-error border-[1.5px] z-50'
+                                      : 'border-blue-400/70 border-[1px] z-40'
                                   }`}
                                   style={{
                                     left: `${(centerX / 1000) * 100}%`,
                                     top: `${(centerY / 1000) * 100}%`,
                                     width: `${(drawWidth / 1000) * 100}%`,
                                     height: `${(drawHeight / 1000) * 100}%`,
-                                    borderRadius: '4px'
+                                    borderRadius: '0px'
                                   }}
                                 >
-                                  {/* Corner Brackets for Technical Look */}
-                                  <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-inherit rounded-tl-sm" />
-                                  <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-inherit rounded-tr-sm" />
-                                  <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-inherit rounded-bl-sm" />
-                                  <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-inherit rounded-br-sm" />
+                                  {/* Technical Framing Brackets */}
+                                  <div className="absolute -top-1 -left-1 w-2 h-2 border-t-2 border-l-2 border-inherit" />
+                                  <div className="absolute -top-1 -right-1 w-2 h-2 border-t-2 border-r-2 border-inherit" />
+                                  <div className="absolute -bottom-1 -left-1 w-2 h-2 border-b-2 border-l-2 border-inherit" />
+                                  <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b-2 border-r-2 border-inherit" />
 
-                                  <div className={`absolute -top-14 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 backdrop-blur-md ${
+                                  {/* Scanning Beam for tech feel */}
+                                  <motion.div 
+                                    initial={{ top: '0%' }}
+                                    animate={{ top: '100%' }}
+                                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                                    className="absolute left-0 right-0 h-[1px] bg-white/40 shadow-[0_0_10px_rgba(255,255,255,0.8)] z-10"
+                                  />
+
+                                  <div className={`absolute -top-16 left-1/2 -translate-x-1/2 text-white text-[10px] px-3 py-1.5 font-bold rounded-lg shadow-xl flex flex-col items-center gap-0.5 whitespace-nowrap border border-white/20 backdrop-blur-xl ${
                                     activeAlerts.some(a => a.plate === det.plate)
-                                      ? 'bg-error/90 animate-pulse'
-                                      : 'bg-blue-600/90'
+                                      ? 'bg-error/95 ring-2 ring-error/50 animate-pulse'
+                                      : 'bg-slate-900/90'
                                   }`}>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="tracking-[0.2em] uppercase flex items-center gap-1.5">
-                                        {activeAlerts.some(a => a.plate === det.plate) && <AlertCircle size={12} fill="currentColor" className="text-white" />}
+                                    <div className="flex items-center gap-2">
+                                      <span className="tracking-widest uppercase font-black text-xs">
                                         {det.plate}
                                       </span>
-                                      <span className={`text-[8px] px-1.5 py-0.5 rounded-lg border border-white/20 ${
-                                        activeAlerts.some(a => a.plate === det.plate) ? 'bg-white/20' :
-                                        det.status === 'Valid' ? 'bg-emerald-500/50' : 
-                                        det.status === 'Low Confidence' ? 'bg-amber-500/50' : 'bg-red-500/50'
-                                      }`}>
-                                        {activeAlerts.some(a => a.plate === det.plate) ? 'WATCHLIST HIT' : det.status}
-                                      </span>
                                     </div>
-                                    <span className="text-[8px] opacity-70 uppercase leading-none mt-1 font-bold text-center">Conf: {Math.round(det.confidence * 100)}%</span>
+                                    <div className="flex items-center gap-1.5 text-[8px] opacity-80">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${det.confidence > 0.85 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                      {Math.round(det.confidence * 100)}% Match
+                                    </div>
                                   </div>
                                 </motion.div>
                               );
@@ -1024,67 +1029,74 @@ export default function LiveView() {
                               <AnimatePresence>
                                   {currentDetections.map((det, idx) => {
                                     if (!det.bbox) return null;
+                                    
+                                    const aspectRatio = det.bbox.width / det.bbox.height;
                                     const centerX = det.bbox.x + det.bbox.width / 2;
                                     const centerY = det.bbox.y + det.bbox.height / 2;
                                     
-                                    // Dynamic padding based on confidence
-                                    const padFactor = det.confidence > 0.9 ? 1.08 : 1.15;
-                                    const drawWidth = det.bbox.width * padFactor;
-                                    const drawHeight = det.bbox.height * padFactor;
+                                    // Dynamic Sizing
+                                    const isLong = aspectRatio > 3.0;
+                                    const pad = det.confidence > 0.95 ? 1.04 : 1.08;
+                                    
+                                    const drawWidth = det.bbox.width * pad;
+                                    const drawHeight = det.bbox.height * pad;
 
                                     return (
                                       <motion.div 
                                         key={`${det.plate}-${idx}`}
-                                        initial={{ opacity: 0, scale: 0.9 }}
+                                        initial={{ opacity: 0, scale: 0.98 }}
                                         animate={{ 
                                           opacity: 1, 
                                           scale: 1,
                                           boxShadow: activeAlerts.some(a => a.plate === det.plate) 
-                                            ? ['0 0 15px #ef4444', '0 0 40px #ef4444', '0 0 15px #ef4444'] 
-                                            : '0 0 25px rgba(59,130,246,0.5)'
+                                            ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
+                                            : '0 0 15px rgba(59,130,246,0.25)'
                                         }}
                                         transition={{ 
                                           boxShadow: { repeat: Infinity, duration: 1.5 }
                                         }}
-                                        exit={{ opacity: 0, scale: 0.9 }}
+                                        exit={{ opacity: 0, scale: 0.98 }}
                                         className={`absolute transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
                                           activeAlerts.some(a => a.plate === det.plate)
-                                            ? 'border-error border-[2.5px] z-50'
-                                            : 'border-blue-400/80 border-[1.5px] z-40'
+                                            ? 'border-error border-[1.5px] z-50'
+                                            : 'border-blue-400/70 border-[1px] z-40'
                                         }`}
                                         style={{
                                           left: `${(centerX / 1000) * 100}%`,
                                           top: `${(centerY / 1000) * 100}%`,
                                           width: `${(drawWidth / 1000) * 100}%`,
                                           height: `${(drawHeight / 1000) * 100}%`,
-                                          borderRadius: '4px'
+                                          borderRadius: '0px'
                                         }}
                                       >
-                                        {/* Corner Brackets for Technical Look */}
-                                        <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-inherit rounded-tl-sm" />
-                                        <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-inherit rounded-tr-sm" />
-                                        <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-inherit rounded-bl-sm" />
-                                        <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-inherit rounded-br-sm" />
+                                        {/* Technical Framing Brackets */}
+                                        <div className="absolute -top-1 -left-1 w-2 h-2 border-t-2 border-l-2 border-inherit" />
+                                        <div className="absolute -top-1 -right-1 w-2 h-2 border-t-2 border-r-2 border-inherit" />
+                                        <div className="absolute -bottom-1 -left-1 w-2 h-2 border-b-2 border-l-2 border-inherit" />
+                                        <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b-2 border-r-2 border-inherit" />
 
-                                        <div className={`absolute -top-14 left-1/2 -translate-x-1/2 text-white text-[10px] px-4 py-2 font-black rounded-xl shadow-2xl flex flex-col whitespace-nowrap border-2 border-white/20 backdrop-blur-md ${
+                                        {/* Scanning Beam */}
+                                        <motion.div 
+                                          initial={{ top: '0%' }}
+                                          animate={{ top: '100%' }}
+                                          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                                          className="absolute left-0 right-0 h-[1px] bg-white/40 shadow-[0_0_10px_rgba(255,255,255,0.8)] z-10"
+                                        />
+
+                                        <div className={`absolute -top-16 left-1/2 -translate-x-1/2 text-white text-[10px] px-3 py-1.5 font-bold rounded-lg shadow-xl flex flex-col items-center gap-0.5 whitespace-nowrap border border-white/20 backdrop-blur-xl ${
                                           activeAlerts.some(a => a.plate === det.plate)
-                                            ? 'bg-error/90 animate-pulse'
-                                            : 'bg-blue-600/90'
+                                            ? 'bg-error/95 ring-2 ring-error/50 animate-pulse'
+                                            : 'bg-slate-900/90'
                                         }`}>
-                                          <div className="flex items-center justify-between gap-2">
-                                            <span className="tracking-[0.2em] uppercase flex items-center gap-1.5">
-                                              {activeAlerts.some(a => a.plate === det.plate) && <AlertCircle size={12} fill="currentColor" className="text-white" />}
+                                          <div className="flex items-center gap-2">
+                                            <span className="tracking-widest uppercase font-black text-xs">
                                               {det.plate}
                                             </span>
-                                            <span className={`text-[8px] px-1.5 py-0.5 rounded-lg border border-white/20 ${
-                                              activeAlerts.some(a => a.plate === det.plate) ? 'bg-white/20' :
-                                              det.status === 'Valid' ? 'bg-emerald-500/50' : 
-                                              det.status === 'Low Confidence' ? 'bg-amber-500/50' : 'bg-red-500/50'
-                                            }`}>
-                                              {activeAlerts.some(a => a.plate === det.plate) ? 'WATCHLIST HIT' : det.status}
-                                            </span>
                                           </div>
-                                          <span className="text-[8px] opacity-70 uppercase leading-none mt-1 font-bold text-center">Conf: {Math.round(det.confidence * 100)}%</span>
+                                          <div className="flex items-center gap-1.5 text-[8px] opacity-80">
+                                            <span className={`w-1.5 h-1.5 rounded-full ${det.confidence > 0.85 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                                            {Math.round(det.confidence * 100)}% Match
+                                          </div>
                                         </div>
                                       </motion.div>
                                     );
@@ -1179,7 +1191,7 @@ export default function LiveView() {
                     className="signature-gradient text-white px-8 py-5 rounded-2xl sm:rounded-3xl font-black text-[10px] uppercase tracking-widest translate-z-0 shadow-lg shadow-primary/20 flex items-center justify-center gap-3 active:scale-95 transition-all group w-full sm:w-auto min-w-[240px]"
                   >
                     <Video size={18} className="group-hover:scale-110 transition-transform" />
-                    Start Camera Nodes
+                    Start Camera
                   </button>
                 )}
                 
@@ -1188,7 +1200,7 @@ export default function LiveView() {
                   className="px-6 py-4 bg-surface-container-high text-on-surface border border-outline-variant/10 rounded-2xl sm:rounded-3xl text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 sm:gap-3 transition-all active:scale-95 w-full sm:w-auto min-w-[200px]"
                 >
                   <CloudUpload size={16} className="sm:w-[18px] sm:h-[18px]" />
-                  Process Payload
+                  Upload Image
                 </button>
 
                 <button 

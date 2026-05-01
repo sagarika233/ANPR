@@ -34,7 +34,7 @@ interface SettingsContextType {
 }
 
 const DEFAULT_SETTINGS: Settings = {
-  confidenceThreshold: 85,
+  confidenceThreshold: 70,
   watchlistAlerts: true,
   systemUpdates: true,
   audibleAlerts: false,
