@@ -103,48 +103,44 @@ export default function LiveView() {
   const wsRef = useRef<WebSocket | null>(null);
   const detectionIntervalRef = useRef<number | null>(null);
 
+  const fetchStats = async () => {
+    try {
+      const res = await fetch('/api/stats');
+      const data = await res.json();
+      setStats(data);
+    } catch (err) {
+      console.error("Error fetching stats:", err);
+    }
+  };
+
+  const fetchRecentDetections = async () => {
+    try {
+      const res = await fetch('/api/search');
+      const data = await res.json();
+      const detections = Array.isArray(data) ? data : (data.data || []);
+      
+      // Transform back to the format expected by liveDetections
+      const formatted = detections.map((d: any) => ({
+        ...d,
+        plate: d.plate_number,
+        id: d.id,
+        timestamp: d.timestamp,
+        image: d.image_url,
+        confidence: d.confidence
+      }));
+      
+      setLiveDetections(formatted.slice(0, 10));
+    } catch (err) {
+      console.error("Error fetching recent detections:", err);
+    }
+  };
+
   // WebSocket Connection
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date().toLocaleTimeString());
     }, 1000);
 
-    const fetchStats = async () => {
-      try {
-        const res = await fetch('/api/stats');
-        const data = await res.json();
-        setStats(data);
-      } catch (err) {
-        console.error("Error fetching stats:", err);
-      }
-    };
-
-    const fetchRecentDetections = async () => {
-      try {
-        const res = await fetch('/api/search');
-        const data = await res.json();
-        const detections = Array.isArray(data) ? data : (data.data || []);
-        
-        // Transform back to the format expected by liveDetections
-        const formatted = detections.map((d: any) => ({
-          ...d,
-          plate: d.plate_number,
-          id: d.id,
-          timestamp: d.timestamp,
-          image: d.image_url,
-          confidence: d.confidence
-        }));
-        
-        setLiveDetections(formatted.slice(0, 10));
-      } catch (err) {
-        console.error("Error fetching recent detections:", err);
-      }
-    };
-
-    fetchStats();
-    fetchRecentDetections();
-    
-    // Enumerate devices
     const getDevices = async () => {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -160,54 +156,70 @@ export default function LiveView() {
     };
     getDevices();
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
-    
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === 'NEW_DETECTION') {
-        const newDet = message.data;
-        
-        setLiveDetections(prev => {
-          // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
-          const isDuplicate = prev.some(d => 
-            d.plate === newDet.plate && 
-            (new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime() < 2000)
-          );
-          
-          if (isDuplicate) return prev;
-          return [newDet, ...prev].slice(0, 10);
-        });
-        
-        // Refresh stats when new detection arrives
-        fetchStats();
-      } else if (message.type === 'ALERT') {
-        const alertDet = message.data;
-        // Add to live detections first
-        setLiveDetections(prev => [alertDet, ...prev].slice(0, 10));
-        
-        // Add to active alerts overlay
-        setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
-        
-        // Auto-remove alert from UI after 10 seconds
-        setTimeout(() => {
-          setActiveAlerts(prev => prev.filter(a => a.id !== alertDet.id));
-        }, 10000);
+    const connectWebSocket = () => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
+      wsRef.current = ws;
 
-        // Visual/Audio Cue (simulated)
-        if (typeof window !== 'undefined') {
-          console.warn(`SURVEILLANCE ALERT: ${alertDet.plate} matches ${alertDet.alertType}`);
+      ws.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.type === 'NEW_DETECTION') {
+          const newDet = message.data;
+          
+          setLiveDetections(prev => {
+            // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
+            const isDuplicate = prev.some(d => 
+              d.plate === newDet.plate && 
+              (new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime() < 2000)
+            );
+            
+            if (isDuplicate) return prev;
+            return [newDet, ...prev].slice(0, 10);
+          });
+          
+          // Refresh stats when new detection arrives
+          fetchStats();
+        } else if (message.type === 'ALERT') {
+          const alertDet = message.data;
+          // Add to live detections first
+          setLiveDetections(prev => [alertDet, ...prev].slice(0, 10));
+          
+          // Add to active alerts overlay
+          setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
+          
+          // Auto-remove alert from UI after 10 seconds
+          setTimeout(() => {
+            setActiveAlerts(prev => prev.filter(a => a.id !== alertDet.id));
+          }, 10000);
+
+          // Visual/Audio Cue (simulated)
+          if (typeof window !== 'undefined') {
+            console.warn(`SURVEILLANCE ALERT: ${alertDet.plate} matches ${alertDet.alertType}`);
+          }
+          
+          fetchStats();
+        } else if (message.type === 'SYSTEM_HEALTH') {
+          setSystemHealth(message.data);
         }
-        
-        fetchStats();
-      } else if (message.type === 'SYSTEM_HEALTH') {
-        setSystemHealth(message.data);
-      }
+      };
+
+      ws.onclose = () => {
+        console.log("WebSocket disconnected. Retrying in 3s...");
+        setTimeout(connectWebSocket, 3000);
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+        ws.close();
+      };
     };
 
-    wsRef.current = ws;
+    connectWebSocket();
+    fetchStats();
+    fetchRecentDetections();
+    
     return () => {
-      ws.close();
+      if (wsRef.current) wsRef.current.close();
       clearInterval(timer);
     };
   }, []);
@@ -242,6 +254,12 @@ export default function LiveView() {
         
         for (const det of validDetections) {
           await saveDetectionToBackend({ ...det, image: item.base64 });
+          
+          // Optimistic UI Update: Increment local stats immediately
+          setStats(prev => ({
+            ...prev,
+            todayDetections: prev.todayDetections + 1
+          }));
         }
 
         setUploadQueue(prev => prev.map((qItem, idx) => 
@@ -307,6 +325,12 @@ export default function LiveView() {
               
               for (const det of validDetections) {
                 await saveDetectionToBackend({ ...det, image: base64Image });
+                
+                // Optimistic UI Update: Increment local stats immediately
+                setStats(prev => ({
+                  ...prev,
+                  todayDetections: prev.todayDetections + 1
+                }));
               }
 
               if (validDetections.length > 0) {
@@ -589,6 +613,12 @@ export default function LiveView() {
         for (const det of validDetections) {
           // Remove registry enrichment per user request (Privacy focus)
           await saveDetectionToBackend({ ...det, image: imageToDetect });
+          
+          // Optimistic UI Update: Increment local stats immediately
+          setStats(prev => ({
+            ...prev,
+            todayDetections: prev.todayDetections + 1
+          }));
         }
         
         setCurrentDetections(validDetections);
@@ -648,6 +678,12 @@ export default function LiveView() {
             for (const det of validDetections) {
               // Remove registry enrichment per user request (Privacy focus)
               await saveDetectionToBackend({ ...det, image: captured });
+              
+              // Optimistic UI Update: Increment local stats immediately
+              setStats(prev => ({
+                ...prev,
+                todayDetections: prev.todayDetections + 1
+              }));
             }
             
             setCurrentDetections(validDetections);
@@ -688,7 +724,7 @@ export default function LiveView() {
   };
 
   return (
-    <div className="space-y-6 pb-24 md:pb-12 px-1">
+    <div className="space-y-4 sm:space-y-6 pb-32 sm:pb-24 md:pb-12 px-1">
       {/* Analytics Overview */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         {[
@@ -738,8 +774,9 @@ export default function LiveView() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             whileHover={{ scale: 1.02 }}
+            onClick={() => i === 0 && fetchStats()}
             transition={{ delay: i * 0.1, duration: 0.2 }}
-            className={`p-3.5 sm:p-5 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text}`}
+            className={`p-3.5 sm:p-5 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text} ${i === 0 ? 'cursor-pointer' : ''}`}
           >
             <div className="flex justify-between items-start mb-2 sm:mb-4 relative z-10">
               <div className={`p-2 sm:p-3 rounded-xl ${stat.iconBg} ${stat.iconColor} transition-transform group-hover:rotate-12`}>
@@ -757,9 +794,9 @@ export default function LiveView() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 sm:gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-8">
         {/* Main Monitor Section */}
-        <div className="xl:col-span-3 space-y-4 sm:space-y-6">
+        <div className="lg:col-span-2 xl:col-span-3 space-y-4 sm:space-y-6">
           <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl sm:rounded-3xl overflow-hidden shadow-md relative group">
             {/* Header */}
             <div className="px-4 sm:px-8 py-3 sm:py-5 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-3 sm:gap-0">
@@ -1302,7 +1339,7 @@ export default function LiveView() {
             </div>
           )}
 
-          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col h-[calc(100vh-280px)] lg:h-[650px] overflow-hidden">
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col max-h-[400px] sm:max-h-[600px] xl:max-h-[85vh] overflow-hidden transition-all duration-300">
             <div className="px-4 py-3 sm:px-5 sm:py-4 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
               <div>
                 <h3 className="text-xs sm:text-sm font-bold uppercase tracking-widest text-on-surface leading-none mb-0.5">Recent Detections</h3>
@@ -1313,9 +1350,9 @@ export default function LiveView() {
               </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-2.5 sm:p-4 space-y-2.5 sm:space-y-3 custom-scrollbar">
               {liveDetections.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
+                <div className="flex flex-col items-center justify-center text-center py-12 px-8 opacity-40 min-h-[200px]">
                   <Database size={40} className="mb-4 text-slate-300" />
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Awaiting Detections...</p>
                 </div>
@@ -1331,7 +1368,7 @@ export default function LiveView() {
                         'border-l-4 border-l-error'
                       }`}
                     >
-                      <div className="flex justify-between items-start mb-2 sm:mb-3">
+                      <div className="flex justify-between items-start mb-1.5 sm:mb-2">
                         <span className={`text-lg font-bold tracking-widest group-hover:text-primary transition-colors flex items-center gap-2 font-headline leading-none ${
                           det.status === 'Valid' ? 'text-on-surface' :
                           det.status === 'Low Confidence' ? 'text-amber-700' :
@@ -1354,7 +1391,7 @@ export default function LiveView() {
                         </div>
                       </div>
                     
-                    <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="grid grid-cols-2 gap-3 mb-2">
                       <div className="flex items-center gap-2 text-[10px] text-on-surface-variant font-bold uppercase tracking-tight opacity-70">
                         <Clock size={12} className="text-primary/60" />
                         <span>{new Date(det.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1366,7 +1403,7 @@ export default function LiveView() {
                     </div>
 
                     {det.make && (
-                      <div className="pt-4 border-t border-outline-variant/10 space-y-3">
+                      <div className="pt-3 border-t border-outline-variant/10 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-tight leading-none truncate pr-2 opacity-80">
                             {det.vehicle_type ? `${det.vehicle_type}` : 'VEHICLE'} • <span className="text-primary font-black uppercase">{det.make} {det.model}</span>

@@ -155,7 +155,7 @@ export default function Settings() {
   ];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-20">
+    <div className="max-w-4xl mx-auto space-y-8 pb-32 sm:pb-24 md:pb-12 px-1">
       <AnimatePresence>
         {showSuccess && (
           <motion.div 

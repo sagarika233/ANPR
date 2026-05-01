@@ -34,6 +34,12 @@ const hashString = (str: string) => {
   return hash.toString();
 };
 
+const STATE_CODES = [
+  "AN", "AP", "AR", "AS", "BR", "CH", "CT", "DN", "DD", "DL", "GA", "GJ", "HR", "HP", 
+  "JK", "JH", "KA", "KL", "LA", "LD", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", 
+  "PB", "RJ", "SK", "TN", "TS", "TR", "UP", "UK", "WB", "BH", "TG"
+];
+
 const normalizePlate = (rawPlate: string): string => {
   // Enhanced normalization focused on Indian HSRP standards (SS DD Series ####)
   // 1. Basic cleanup: Remove junk, spaces, and normalize case
@@ -57,13 +63,6 @@ const normalizePlate = (rawPlate: string): string => {
     '4': 'A', '6': 'G', '7': 'T', '3': 'E', '9': 'J'
   };
   
-  const stateCodes = [
-    "AN", "AP", "AR", "AS", "BR", "CH", "CT", "DN", "DD", "DL", "GA", "GJ", "HR", "HP", 
-    "JK", "JH", "KA", "KL", "LA", "LD", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", 
-    "PB", "RJ", "SK", "TN", "TS", "TR", "UP", "UK", "WB", "BH", "TG"
-  ];
-
-  // Helper to correct string based on map
   const fix = (s: string, m: Record<string, string>) => s.split('').map(c => m[c] || c).join('');
 
   // 1. Handle BH Series: YY BH #### XX (Example: 22 BH 1234 AA)
@@ -271,18 +270,44 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
     const parsedData = JSON.parse(text);
     let detections: DetectionResult[] = parsedData.detections || [];
 
+    // programmatic validation map
+    const isValidDistrict = (d: string) => /^\d{2}$/.test(d);
+    const isValidState = (s: string) => STATE_CODES.includes(s);
+
+    detections = detections.map(det => {
+      // Apply advanced position-aware OCR normalization FIRST
+      const normalized = normalizePlate(det.plate);
+      det.plate = normalized;
+
+      // Programmatic Upgrade: If it matches Indian HSRP precisely, it's Valid
+      // Standard: XX DD SS #### or XX DD # or BH series
+      const isStandardFormat = /^[A-Z]{2}\s\d{2}\s[A-Z]*\s?\d{1,4}$/.test(normalized);
+      const isBHFormat = /^\d{2}\sBH\s\d{4}\s[A-Z]{1,2}$/.test(normalized);
+      
+      if (isStandardFormat || isBHFormat) {
+        // High quality match - upgrade status if model was unsure
+        if (det.status === 'Low Confidence' && det.confidence > 0.75) {
+          det.status = 'Valid';
+        }
+      }
+
+      // Final Blur adjustment - if extremely sharp, don't let model say blurry
+      if (blurScore > 400 && det.status === 'Blurry Image') {
+        det.status = 'Low Confidence';
+      }
+
+      return det;
+    });
+
     if (isImageBlurry) {
       detections = detections.map(d => ({
         ...d,
-        status: d.status === 'Valid' ? 'Low Confidence' : d.status,
+        status: (d.status === 'Valid' && blurScore < 200) ? 'Low Confidence' : d.status,
         is_blurry: true
       }));
     }
     
     detections.forEach(det => {
-      // Apply advanced position-aware OCR normalization
-      det.plate = normalizePlate(det.plate);
-      
       if (det.bbox) {
         const centerX = det.bbox.x + det.bbox.width / 2;
         const centerY = det.bbox.y + det.bbox.height / 2;
