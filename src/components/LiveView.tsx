@@ -103,44 +103,48 @@ export default function LiveView() {
   const wsRef = useRef<WebSocket | null>(null);
   const detectionIntervalRef = useRef<number | null>(null);
 
-  const fetchStats = async () => {
-    try {
-      const res = await fetch('/api/stats');
-      const data = await res.json();
-      setStats(data);
-    } catch (err) {
-      console.error("Error fetching stats:", err);
-    }
-  };
-
-  const fetchRecentDetections = async () => {
-    try {
-      const res = await fetch('/api/search');
-      const data = await res.json();
-      const detections = Array.isArray(data) ? data : (data.data || []);
-      
-      // Transform back to the format expected by liveDetections
-      const formatted = detections.map((d: any) => ({
-        ...d,
-        plate: d.plate_number,
-        id: d.id,
-        timestamp: d.timestamp,
-        image: d.image_url,
-        confidence: d.confidence
-      }));
-      
-      setLiveDetections(formatted.slice(0, 10));
-    } catch (err) {
-      console.error("Error fetching recent detections:", err);
-    }
-  };
-
   // WebSocket Connection
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date().toLocaleTimeString());
     }, 1000);
 
+    const fetchStats = async () => {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        setStats(data);
+      } catch (err) {
+        console.error("Error fetching stats:", err);
+      }
+    };
+
+    const fetchRecentDetections = async () => {
+      try {
+        const res = await fetch('/api/search');
+        const data = await res.json();
+        const detections = Array.isArray(data) ? data : (data.data || []);
+        
+        // Transform back to the format expected by liveDetections
+        const formatted = detections.map((d: any) => ({
+          ...d,
+          plate: d.plate_number,
+          id: d.id,
+          timestamp: d.timestamp,
+          image: d.image_url,
+          confidence: d.confidence
+        }));
+        
+        setLiveDetections(formatted.slice(0, 10));
+      } catch (err) {
+        console.error("Error fetching recent detections:", err);
+      }
+    };
+
+    fetchStats();
+    fetchRecentDetections();
+    
+    // Enumerate devices
     const getDevices = async () => {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -156,70 +160,54 @@ export default function LiveView() {
     };
     getDevices();
 
-    const connectWebSocket = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
-      wsRef.current = ws;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
+    
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'NEW_DETECTION') {
+        const newDet = message.data;
+        
+        setLiveDetections(prev => {
+          // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
+          const isDuplicate = prev.some(d => 
+            d.plate === newDet.plate && 
+            (new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime() < 2000)
+          );
+          
+          if (isDuplicate) return prev;
+          return [newDet, ...prev].slice(0, 10);
+        });
+        
+        // Refresh stats when new detection arrives
+        fetchStats();
+      } else if (message.type === 'ALERT') {
+        const alertDet = message.data;
+        // Add to live detections first
+        setLiveDetections(prev => [alertDet, ...prev].slice(0, 10));
+        
+        // Add to active alerts overlay
+        setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
+        
+        // Auto-remove alert from UI after 10 seconds
+        setTimeout(() => {
+          setActiveAlerts(prev => prev.filter(a => a.id !== alertDet.id));
+        }, 10000);
 
-      ws.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-        if (message.type === 'NEW_DETECTION') {
-          const newDet = message.data;
-          
-          setLiveDetections(prev => {
-            // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
-            const isDuplicate = prev.some(d => 
-              d.plate === newDet.plate && 
-              (new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime() < 2000)
-            );
-            
-            if (isDuplicate) return prev;
-            return [newDet, ...prev].slice(0, 10);
-          });
-          
-          // Refresh stats when new detection arrives
-          fetchStats();
-        } else if (message.type === 'ALERT') {
-          const alertDet = message.data;
-          // Add to live detections first
-          setLiveDetections(prev => [alertDet, ...prev].slice(0, 10));
-          
-          // Add to active alerts overlay
-          setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
-          
-          // Auto-remove alert from UI after 10 seconds
-          setTimeout(() => {
-            setActiveAlerts(prev => prev.filter(a => a.id !== alertDet.id));
-          }, 10000);
-
-          // Visual/Audio Cue (simulated)
-          if (typeof window !== 'undefined') {
-            console.warn(`SURVEILLANCE ALERT: ${alertDet.plate} matches ${alertDet.alertType}`);
-          }
-          
-          fetchStats();
-        } else if (message.type === 'SYSTEM_HEALTH') {
-          setSystemHealth(message.data);
+        // Visual/Audio Cue (simulated)
+        if (typeof window !== 'undefined') {
+          console.warn(`SURVEILLANCE ALERT: ${alertDet.plate} matches ${alertDet.alertType}`);
         }
-      };
-
-      ws.onclose = () => {
-        console.log("WebSocket disconnected. Retrying in 3s...");
-        setTimeout(connectWebSocket, 3000);
-      };
-
-      ws.onerror = (err) => {
-        console.error("WebSocket error:", err);
-        ws.close();
-      };
+        
+        fetchStats();
+      } else if (message.type === 'SYSTEM_HEALTH') {
+        setSystemHealth(message.data);
+      }
     };
 
-    connectWebSocket();
-    fetchStats();
-    fetchRecentDetections();
-    
+    wsRef.current = ws;
     return () => {
-      if (wsRef.current) wsRef.current.close();
+      ws.close();
       clearInterval(timer);
     };
   }, []);
@@ -254,12 +242,6 @@ export default function LiveView() {
         
         for (const det of validDetections) {
           await saveDetectionToBackend({ ...det, image: item.base64 });
-          
-          // Optimistic UI Update: Increment local stats immediately
-          setStats(prev => ({
-            ...prev,
-            todayDetections: prev.todayDetections + 1
-          }));
         }
 
         setUploadQueue(prev => prev.map((qItem, idx) => 
@@ -325,12 +307,6 @@ export default function LiveView() {
               
               for (const det of validDetections) {
                 await saveDetectionToBackend({ ...det, image: base64Image });
-                
-                // Optimistic UI Update: Increment local stats immediately
-                setStats(prev => ({
-                  ...prev,
-                  todayDetections: prev.todayDetections + 1
-                }));
               }
 
               if (validDetections.length > 0) {
@@ -613,12 +589,6 @@ export default function LiveView() {
         for (const det of validDetections) {
           // Remove registry enrichment per user request (Privacy focus)
           await saveDetectionToBackend({ ...det, image: imageToDetect });
-          
-          // Optimistic UI Update: Increment local stats immediately
-          setStats(prev => ({
-            ...prev,
-            todayDetections: prev.todayDetections + 1
-          }));
         }
         
         setCurrentDetections(validDetections);
@@ -678,12 +648,6 @@ export default function LiveView() {
             for (const det of validDetections) {
               // Remove registry enrichment per user request (Privacy focus)
               await saveDetectionToBackend({ ...det, image: captured });
-              
-              // Optimistic UI Update: Increment local stats immediately
-              setStats(prev => ({
-                ...prev,
-                todayDetections: prev.todayDetections + 1
-              }));
             }
             
             setCurrentDetections(validDetections);
@@ -774,9 +738,8 @@ export default function LiveView() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             whileHover={{ scale: 1.02 }}
-            onClick={() => i === 0 && fetchStats()}
             transition={{ delay: i * 0.1, duration: 0.2 }}
-            className={`p-3.5 sm:p-5 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text} ${i === 0 ? 'cursor-pointer' : ''}`}
+            className={`p-3.5 sm:p-5 rounded-2xl shadow-sm border border-outline-variant/10 hover:shadow-xl transition-all card-shadow flex flex-col justify-between relative overflow-hidden group ${stat.bg} ${stat.text}`}
           >
             <div className="flex justify-between items-start mb-2 sm:mb-4 relative z-10">
               <div className={`p-2 sm:p-3 rounded-xl ${stat.iconBg} ${stat.iconColor} transition-transform group-hover:rotate-12`}>

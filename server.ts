@@ -248,12 +248,14 @@ app.get("/api/stats", async (req, res) => {
       }
     } else {
       // Fallback: Fetch from SQLite
-      // Use SQLite date functions to stay consistent with DEFAULT CURRENT_TIMESTAMP (UTC)
-      const todayQuery = "SELECT confidence, location FROM history WHERE date(timestamp) = date('now')";
-      const yesterdayQuery = "SELECT COUNT(*) as count FROM history WHERE date(timestamp) = date('now', '-1 day')";
+      const todayIso = today.toISOString();
+      const yesterdayIso = yesterday.toISOString();
       
-      const todayRows: any[] = await new Promise((resolve) => db.all(todayQuery, [], (err, rows) => resolve(rows || [])));
-      const yesterdayResult: any = await new Promise((resolve) => db.get(yesterdayQuery, [], (err, row) => resolve(row || { count: 0 })));
+      const todayQuery = "SELECT confidence, location FROM history WHERE timestamp >= ?";
+      const yesterdayQuery = "SELECT COUNT(*) as count FROM history WHERE timestamp >= ? AND timestamp < ?";
+      
+      const todayRows: any[] = await new Promise((resolve) => db.all(todayQuery, [todayIso], (err, rows) => resolve(rows || [])));
+      const yesterdayResult: any = await new Promise((resolve) => db.get(yesterdayQuery, [yesterdayIso, todayIso], (err, row) => resolve(row || { count: 0 })));
       
       stats.todayDetections = todayRows.length;
       stats.avgConfidence = todayRows.reduce((acc: any, curr: any) => acc + (curr.confidence || 0), 0) / (todayRows.length || 1);
