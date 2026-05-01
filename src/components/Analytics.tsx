@@ -153,7 +153,7 @@ export default function Analytics() {
   };
 
   return (
-    <div className="space-y-8 pb-32 sm:pb-24 md:pb-12 px-1">
+    <div className="space-y-8">
       {/* Header Section */}
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div>

@@ -147,7 +147,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
               animate={{ x: 0 }}
               exit={{ x: -300 }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed left-0 top-0 h-screen w-[280px] z-[70] bg-surface-container-low flex flex-col pt-8 pb-4 border-r border-outline-variant/10 shadow-2xl md:hidden overflow-y-auto"
+              className="fixed left-0 top-0 h-screen w-[280px] z-[70] bg-surface-container-low flex flex-col pt-8 pb-4 border-r border-outline-variant/10 shadow-2xl md:hidden"
             >
               <SidebarContent />
             </motion.aside>
@@ -264,7 +264,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
 
 
         {/* Mobile Bottom NavBar */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 flex items-center justify-around h-16 w-full px-2">
+        <nav className="md:hidden sticky bottom-0 z-50 bg-surface-container-lowest/90 backdrop-blur-xl border-t border-outline-variant/10 flex items-center justify-around h-16 w-full px-2">
           {navItems.map((item) => (
             <button
               key={item.id}

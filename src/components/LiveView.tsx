@@ -688,7 +688,7 @@ export default function LiveView() {
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-32 sm:pb-24 md:pb-12 px-1">
+    <div className="space-y-4 sm:space-y-6 pb-24 md:pb-12 px-1">
       {/* Analytics Overview */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         {[
@@ -1302,7 +1302,7 @@ export default function LiveView() {
             </div>
           )}
 
-          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col max-h-[400px] sm:max-h-[600px] xl:max-h-[85vh] overflow-hidden transition-all duration-300">
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col max-h-[500px] sm:max-h-[600px] xl:max-h-[85vh] overflow-hidden transition-all duration-300">
             <div className="px-4 py-3 sm:px-5 sm:py-4 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
               <div>
                 <h3 className="text-xs sm:text-sm font-bold uppercase tracking-widest text-on-surface leading-none mb-0.5">Recent Detections</h3>
