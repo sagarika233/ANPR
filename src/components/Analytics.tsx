@@ -51,23 +51,36 @@ export default function Analytics() {
         const startOfDay = new Date();
         startOfDay.setHours(0, 0, 0, 0);
 
-        const { data } = await supabase
-          .from('vehicle_records')
-          .select('*');
-        
-        if (data) {
-          const todayCount = data.filter(r => new Date(r.timestamp) >= startOfDay).length;
-          const avgConf = data.length > 0 
-            ? data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / data.length
-            : 0;
-          const alerts = data.filter(r => (r.status === 'Watchlist' || r.status === 'Unauthorized')).length;
+        try {
+          // Count today's records
+          const { count: todayCount, error: countError } = await supabase
+            .from('vehicle_records')
+            .select('*', { count: 'exact', head: true })
+            .gte('timestamp', startOfDay.toISOString());
 
-          setStatsSummary(prev => ({
-            ...prev,
-            todayDetections: todayCount,
-            avgConfidence: avgConf,
-            watchlistHits: alerts
-          }));
+          // Get stats for average confidence and watchlist hits
+          const { data, error: dataError } = await supabase
+            .from('vehicle_records')
+            .select('confidence, status')
+            .gte('timestamp', startOfDay.toISOString());
+
+          if (countError || dataError) throw countError || dataError;
+
+          if (data) {
+            const avgConf = data.length > 0 
+              ? data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / data.length
+              : 0;
+            const alerts = data.filter(r => (r.status === 'Watchlist' || r.status === 'Unauthorized')).length;
+
+            setStatsSummary(prev => ({
+              ...prev,
+              todayDetections: todayCount || 0,
+              avgConfidence: avgConf,
+              watchlistHits: alerts
+            }));
+          }
+        } catch (sbErr) {
+          console.error("Supabase stats fetch failed in Analytics:", sbErr);
         }
       }
     }

@@ -153,38 +153,57 @@ export default function LiveView() {
       const res = await fetch('/api/stats');
       if (res.ok) {
         const data = await res.json();
-        setStats(data);
+        setStats(prev => ({
+          ...prev,
+          ...data,
+          activeCameras: activeCameras.length || prev.activeCameras
+        }));
       } else {
         throw new Error('API failed');
       }
     } catch (err) {
       if (supabase) {
-        // Correct "Today" filter for stats
         const startOfDay = new Date();
         startOfDay.setHours(0, 0, 0, 0);
 
-        const { data } = await supabase
-          .from('vehicle_records')
-          .select('*');
-        
-        if (data) {
-          // Calculate stats locally
-          const todayCount = data.filter(r => new Date(r.timestamp) >= startOfDay).length;
-          const avgConf = data.length > 0 
-            ? data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / data.length
-            : 0;
-          const alerts = data.filter(r => (r.status === 'Watchlist' || r.status === 'Unauthorized')).length;
+        try {
+          // Get today's detections count
+          const { count: todayCount, error: countError } = await supabase
+            .from('vehicle_records')
+            .select('*', { count: 'exact', head: true })
+            .gte('timestamp', startOfDay.toISOString());
 
-          setStats(prev => ({
-            ...prev,
-            todayDetections: todayCount,
-            avgConfidence: avgConf,
-            watchlistHits: alerts
-          }));
+          // Get stats for average confidence and watchlist hits
+          // We still need some data for average, but let's limit it
+          const { data, error: dataError } = await supabase
+            .from('vehicle_records')
+            .select('confidence, status')
+            .gte('timestamp', startOfDay.toISOString());
+
+          if (countError || dataError) throw countError || dataError;
+
+          if (data) {
+            const avgConf = data.length > 0 
+              ? data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / data.length
+              : 0;
+            const alerts = data.filter(r => (r.status === 'Watchlist' || r.status === 'Unauthorized')).length;
+
+            setStats(prev => ({
+              ...prev,
+              todayDetections: todayCount || 0,
+              avgConfidence: avgConf,
+              watchlistHits: alerts,
+              activeCameras: activeCameras.length || prev.activeCameras
+            }));
+          }
+        } catch (sbErr) {
+          console.error("Supabase stats fetch failed:", sbErr);
         }
+      } else {
+        console.warn("Supabase not configured. Stats will remain 0 in static builds.");
       }
     }
-  }, []);
+  }, [activeCameras.length]);
 
   const fetchSystemLogs = useCallback(async () => {
     try {
