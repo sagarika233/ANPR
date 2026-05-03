@@ -312,11 +312,27 @@ export default function LiveView() {
         
         if (context && video.videoWidth > 0) {
           isDectectingCurrentRef.current = true;
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          context.drawImage(video, 0, 0, canvas.width, canvas.height);
           
-          let base64Image = canvas.toDataURL('image/jpeg', 0.8);
+          // Optimization: Constrain capture resolution to 1280px max for faster processing
+          const maxDim = 1280;
+          let targetWidth = video.videoWidth;
+          let targetHeight = video.videoHeight;
+          
+          if (targetWidth > targetHeight) {
+            if (targetWidth > maxDim) {
+              targetHeight *= maxDim / targetWidth;
+              targetWidth = maxDim;
+            }
+          } else if (targetHeight > maxDim) {
+            targetWidth *= maxDim / targetHeight;
+            targetHeight = maxDim;
+          }
+
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+          context.drawImage(video, 0, 0, targetWidth, targetHeight);
+          
+          const base64Image = canvas.toDataURL('image/jpeg', 0.7);
 
           try {
             const results = await detectPlate(base64Image);
@@ -590,9 +606,24 @@ export default function LiveView() {
         const video = activeCam.videoRef.current;
         const context = canvas.getContext('2d');
         if (context) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          // Optimization: Constrain capture resolution to 1280px max
+          const maxDim = 1280;
+          let targetWidth = video.videoWidth;
+          let targetHeight = video.videoHeight;
+          
+          if (targetWidth > targetHeight) {
+            if (targetWidth > maxDim) {
+              targetHeight *= maxDim / targetWidth;
+              targetWidth = maxDim;
+            }
+          } else if (targetHeight > maxDim) {
+            targetWidth *= maxDim / targetHeight;
+            targetHeight = maxDim;
+          }
+
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+          context.drawImage(video, 0, 0, targetWidth, targetHeight);
           imageToDetect = canvas.toDataURL('image/jpeg', 0.8);
         }
       }

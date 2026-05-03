@@ -413,19 +413,30 @@ export const calculateBlurScore = async (base64Image: string): Promise<number> =
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
+      // Optimize: Resize to a smaller dimension for faster blur analysis
+      // Blur across a 300px image is usually representative enough for detection quality.
+      const targetDim = 300;
+      let width = img.width;
+      let height = img.height;
+      
+      if (width > height) {
+        height *= targetDim / width;
+        width = targetDim;
+      } else {
+        width *= targetDim / height;
+        height = targetDim;
+      }
+
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       if (!ctx) return reject(new Error('Canvas ctx null'));
       
-      canvas.width = img.width;
-      canvas.height = img.height;
-      ctx.drawImage(img, 0, 0);
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(img, 0, 0, width, height);
       
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, width, height);
       const data = imageData.data;
-      const width = canvas.width;
-      const height = canvas.height;
-      
       const grayscale = new Float32Array(width * height);
       for (let i = 0; i < data.length; i += 4) {
         grayscale[i / 4] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];

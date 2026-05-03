@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { fastPreprocess, calculateBlurScore } from "../utils/imageUtils";
 
 export interface DetectionResult {
@@ -148,8 +148,9 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
 
     const isImageBlurry = blurScore < 200; 
     
-    // Send Original & Enhanced for better contrast detection
-    const cleanOrig = processed.original.split(',')[1] || processed.original;
+    // Optimization: Send only the Enhanced image. 
+    // Gemini is powerful enough to handle vision with the contrast/brightness boosts 
+    // applied in fastPreprocess. Sending multiple images increases latency and token count.
     const cleanEnhanced = processed.enhanced.split(',')[1] || processed.enhanced;
 
     const response = await ai.models.generateContent({
@@ -158,7 +159,6 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
         {
           role: "user",
           parts: [
-            { inlineData: { mimeType: "image/jpeg", data: cleanOrig } },
             { inlineData: { mimeType: "image/jpeg", data: cleanEnhanced } },
             {
               text: `Identify ALL license plates and vehicles. 
@@ -172,6 +172,7 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
       ],
       config: {
         temperature: 0,
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
