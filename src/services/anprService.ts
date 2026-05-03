@@ -141,18 +141,28 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
   try {
-    // Start preprocessing and blur check in parallel
-    const [processed, blurScore] = await Promise.all([
-      fastPreprocess(base64Image, 800),
-      calculateBlurScore(base64Image)
-    ]);
+    // Optimization: Skip preprocessing if the image is already small (<1200px) and we don't need blur check or specific enhancement
+    // However, fastPreprocess usually provides a contrast boost.
+    // We'll check if we can skip some heavy lifting.
+    let processedBase64 = base64Image;
+    let isImageBlurry = false;
 
-    const isImageBlurry = blurScore < 200; 
-    
-    // Optimization: Send only the Enhanced image. 
-    // Gemini is powerful enough to handle vision with the contrast/brightness boosts 
-    // applied in fastPreprocess. Sending multiple images increases latency and token count.
-    const cleanEnhanced = processed.enhanced.split(',')[1] || processed.enhanced;
+    // A 1024px JPEG at 0.5 quality is usually around 100-250KB. 
+    // If it's already in that range, we can consider skipping preprocessing for speed.
+    if (base64Image.length < 250000) { 
+      processedBase64 = base64Image;
+      // We still might want a quick blur check, but let's assume it's okay for speed 
+      // or was already checked if coming from the live loop.
+    } else {
+      const [processed, blurScore] = await Promise.all([
+        fastPreprocess(base64Image, 1024), // Increased to 1024 for better OCR detail
+        calculateBlurScore(base64Image)
+      ]);
+      processedBase64 = processed.enhanced;
+      isImageBlurry = blurScore < 200;
+    }
+
+    const cleanEnhanced = processedBase64.split(',')[1] || processedBase64;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",

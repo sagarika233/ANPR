@@ -401,8 +401,8 @@ export default function LiveView() {
         if (context && video.videoWidth > 0) {
           isDectectingCurrentRef.current = true;
           
-          // Optimization: Constrain capture resolution to 1280px max for faster processing
-          const maxDim = 1280;
+          // Optimization: Constrain capture resolution to 1024px max for faster processing
+          const maxDim = 1024;
           let targetWidth = video.videoWidth;
           let targetHeight = video.videoHeight;
           
@@ -418,9 +418,17 @@ export default function LiveView() {
 
           canvas.width = targetWidth;
           canvas.height = targetHeight;
+          context.imageSmoothingEnabled = true;
+          context.imageSmoothingQuality = 'high';
           context.drawImage(video, 0, 0, targetWidth, targetHeight);
           
-          const base64Image = canvas.toDataURL('image/jpeg', 0.7);
+          // Apply hardware-accelerated enhancement directly to the capture canvas
+          context.save();
+          context.filter = 'contrast(1.3) brightness(1.05) saturate(1.1)';
+          context.drawImage(canvas, 0, 0);
+          context.restore();
+          
+          const base64Image = canvas.toDataURL('image/jpeg', 0.5); // Quality 0.5 is sufficient for Gemini 1.5 Flash
 
           try {
             const results = await detectPlate(base64Image);
@@ -434,13 +442,14 @@ export default function LiveView() {
               
               const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
               
-              for (const det of validDetections) {
-                await saveDetectionToBackend({ ...det, image: base64Image });
-              }
-
               if (validDetections.length > 0) {
                 setCurrentDetections(validDetections);
                 
+                // Perform backend saves in parallel without blocking UI update
+                Promise.all(validDetections.map(det => 
+                  saveDetectionToBackend({ ...det, image: base64Image })
+                )).catch(err => console.error("Parallel save error:", err));
+
                 // Clear detection overlay after 4 seconds
                 setTimeout(() => setCurrentDetections([]), 4000);
               }
@@ -654,7 +663,21 @@ export default function LiveView() {
       const readFile = (file: File): Promise<string> => {
         return new Promise((resolve) => {
           const reader = new FileReader();
-          reader.onload = (e) => resolve(e.target?.result as string);
+          reader.onload = async (e) => {
+            const rawBase64 = e.target?.result as string;
+            // Pre-resize large files to save memory and processing time
+            if (file.size > 500000) {
+              try {
+                const { resizeImage } = await import('../utils/imageUtils');
+                const resized = await resizeImage(rawBase64, 1280, 0.7);
+                resolve(resized);
+              } catch {
+                resolve(rawBase64);
+              }
+            } else {
+              resolve(rawBase64);
+            }
+          };
           reader.readAsDataURL(file);
         });
       };
@@ -730,12 +753,14 @@ export default function LiveView() {
         
         const validDetections = results.filter(r => r.confidence * 100 >= settings.confidenceThreshold);
         
-        for (const det of validDetections) {
-          // Remove registry enrichment per user request (Privacy focus)
-          await saveDetectionToBackend({ ...det, image: imageToDetect });
+        if (validDetections.length > 0) {
+          setCurrentDetections(validDetections);
+          
+          // Parallel save
+          Promise.all(validDetections.map(det => 
+            saveDetectionToBackend({ ...det, image: imageToDetect || "" })
+          )).catch(err => console.error("Manual save error:", err));
         }
-        
-        setCurrentDetections(validDetections);
       }
     } catch (error: any) {
       console.error("Manual detection failed:", error);

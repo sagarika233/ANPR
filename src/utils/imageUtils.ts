@@ -1,4 +1,20 @@
 /**
+ * Fast version of enhancement that works directly on a canvas context
+ * to avoids redundant Image object reloads.
+ */
+export const enhanceCanvasForOCR = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+  // Save current state
+  ctx.save();
+  
+  // Apply fast CSS filters - Hardware accelerated
+  // We apply these and then redraw the canvas content onto itself
+  ctx.filter = 'contrast(1.4) brightness(1.1) saturate(1.1) sharp(0.5)'; 
+  ctx.drawImage(ctx.canvas, 0, 0);
+  
+  ctx.restore();
+};
+
+/**
  * Optimizes the image for ANPR in a single pass using hardware-accelerated canvas filters.
  * MUCH faster than manual pixel manipulation for large frames.
  * @param base64Image The source image.
