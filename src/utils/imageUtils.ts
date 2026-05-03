@@ -1,4 +1,53 @@
 /**
+ * Optimizes the image for ANPR in a single pass using hardware-accelerated canvas filters.
+ * MUCH faster than manual pixel manipulation for large frames.
+ * @param base64Image The source image.
+ * @returns An object containing the original resized and optimized images.
+ */
+export const fastPreprocess = async (base64Image: string, maxDim = 800): Promise<{ original: string; enhanced: string }> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      if (width > height) {
+        if (width > maxDim) {
+          height *= maxDim / width;
+          width = maxDim;
+        }
+      } else if (height > maxDim) {
+        width *= maxDim / height;
+        height = maxDim;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject('No context');
+
+      // 1. Draw original resized
+      ctx.drawImage(img, 0, 0, width, height);
+      const original = canvas.toDataURL('image/jpeg', 0.6);
+
+      // 2. Apply fast CSS filters for enhancement (Contrast + Sharpness simulation)
+      // Note: 'filter' property on context is widely supported and hardware accelerated
+      ctx.clearRect(0, 0, width, height);
+      ctx.filter = 'contrast(1.4) brightness(1.1) saturate(1.2)';
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // We don't bother with manual convolution sharpening here if speed is the goal.
+      // The 1.4 contrast usually does enough to define character edges for Gemini.
+      const enhanced = canvas.toDataURL('image/jpeg', 0.5);
+
+      resolve({ original, enhanced });
+    };
+    img.onerror = reject;
+    img.src = base64Image;
+  });
+};
+
+/**
  * Resizes an image to a maximum dimension while maintaining aspect ratio.
  * @param base64Image The source image in base64 format.
  * @param maxDimension The maximum width or height.

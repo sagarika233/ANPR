@@ -75,6 +75,15 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS system_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message TEXT NOT NULL,
+      type TEXT DEFAULT 'info',
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   // Migration: Add new columns if they don't exist
   db.all("PRAGMA table_info(history)", (err, columns: any[]) => {
     if (err) return;
@@ -284,16 +293,71 @@ app.get("/api/stats", async (req, res) => {
   }
 });
 
-app.get("/api/history", (req, res) => {
-  // Requirement: Do NOT show full history by default.
-  // We can return empty, or if there's a search param, we handle it.
+app.get("/api/history", async (req, res) => {
   const plate = req.query.plate as string;
-  if (!plate) {
-    return res.json([]);
+  
+  try {
+    if (supabase) {
+      let query = supabase
+        .from('vehicle_records')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(100);
+      
+      if (plate) {
+        query = query.ilike('plate_number', `%${plate}%`);
+      }
+      
+      const { data, error } = await query;
+      if (error) throw error;
+      return res.json(data || []);
+    } else {
+      let query = "SELECT *, plate as plate_number, image as image_url FROM history";
+      const params: any[] = [];
+      if (plate) {
+        query += " WHERE plate LIKE ?";
+        params.push(`%${plate}%`);
+      }
+      query += " ORDER BY timestamp DESC LIMIT 100";
+      
+      db.all(query, params, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+      });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
+});
 
-  // Handle it as a search if plate is provided
-  res.redirect(`/api/search?plate=${encodeURIComponent(plate)}`);
+app.get("/api/logs", async (req, res) => {
+  try {
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('system_logs')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(50);
+      
+      if (error) {
+        // Fallback to SQLite if table doesn't exist in Supabase yet
+        console.warn("Supabase system_logs fetch failed, falling back to SQLite:", error.message);
+        db.all("SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT 50", (err, rows) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json(rows || []);
+        });
+        return;
+      }
+      return res.json(data || []);
+    } else {
+      db.all("SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT 50", (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+      });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/api/search", async (req, res) => {
@@ -310,8 +374,8 @@ app.get("/api/search", async (req, res) => {
       if (plate) {
         queryBuilder = queryBuilder.ilike('plate_number', `%${plate}%`);
       }
-
-      const { data, error } = await queryBuilder;
+      
+      const { data, error } = await queryBuilder.limit(40);
 
       if (error) throw error;
       if (!data || data.length === 0) {
@@ -327,7 +391,7 @@ app.get("/api/search", async (req, res) => {
           query += " WHERE plate LIKE ?";
           params.push(`%${plate}%`);
         }
-        query += " ORDER BY timestamp DESC LIMIT 20";
+        query += " ORDER BY timestamp DESC LIMIT 40";
         
         db.all(query, params, (err, rows) => {
           if (err) return res.status(500).json({ error: err.message });
@@ -391,8 +455,27 @@ app.delete("/api/watchlist/:id", (req, res) => {
 });
 
 // Helper to broadcast system activity
-function broadcastActivity(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
-  // Logic removed as per user request to eliminate notification system
+async function broadcastActivity(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') {
+  const log = { message, type, timestamp: new Date().toISOString() };
+  
+  // Persist to database (SQLite)
+  db.run("INSERT INTO system_logs (message, type, timestamp) VALUES (?, ?, ?)", [message, type, log.timestamp]);
+  
+  // Persist to Supabase if available
+  if (supabase) {
+    try {
+      await supabase.from('system_logs').insert([log]);
+    } catch (e) {
+      // Silently fail if table not exists, we have SQLite fallback
+    }
+  }
+  
+  // Broadcast to all clients
+  wss.clients.forEach(client => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({ type: 'SYSTEM_ACTIVITY', data: log }));
+    }
+  });
 }
 
 // Periodic system activities simulation removed
@@ -463,6 +546,9 @@ app.post("/api/detections", async (req, res) => {
           ...registry,
           timestamp: new Date(), location, status, image, is_blurry
         };
+
+        // Log the activity
+        broadcastActivity(`Vehicle ${plateUpper} (${make || 'Unknown'}) detected at ${location || 'Main Entrance'}`, 'info');
 
         // 3. Real-time Alert Rule Check
         db.get("SELECT * FROM watchlist WHERE plate = ?", [plateUpper], (err, row: any) => {

@@ -1,5 +1,5 @@
 {
-  "name": "Vigilant ALPR - Smart Security Suite",
+  "name": "SmartPlate Monitor - Vehicle Tracking Suite",
   "description": "Smart security system that recognizes vehicle number plates in real-time, checks vehicle details, and provides high-accuracy monitoring.",
   "requestFramePermissions": ["camera"]
 }

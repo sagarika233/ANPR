@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { sharpenImage, enhanceContrast, resizeImage, calculateBlurScore, adaptiveThresholding } from "../utils/imageUtils";
+import { fastPreprocess, calculateBlurScore } from "../utils/imageUtils";
 
 export interface DetectionResult {
   plate: string;
@@ -34,12 +34,6 @@ const hashString = (str: string) => {
   return hash.toString();
 };
 
-const STATE_CODES = [
-  "AN", "AP", "AR", "AS", "BR", "CH", "CT", "DN", "DD", "DL", "GA", "GJ", "HR", "HP", 
-  "JK", "JH", "KA", "KL", "LA", "LD", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", 
-  "PB", "RJ", "SK", "TN", "TS", "TR", "UP", "UK", "WB", "BH", "TG"
-];
-
 const normalizePlate = (rawPlate: string): string => {
   // Enhanced normalization focused on Indian HSRP standards (SS DD Series ####)
   // 1. Basic cleanup: Remove junk, spaces, and normalize case
@@ -55,7 +49,7 @@ const normalizePlate = (rawPlate: string): string => {
   const L_TO_D: Record<string, string> = { 
     'O': '0', 'I': '1', 'Z': '2', 'S': '5', 'B': '8', 
     'G': '6', 'Q': '0', 'D': '0', 'T': '7', 'L': '1',
-    'A': '4', 'E': '3', 'J': '9'
+    'A': '4', 'E': '3', 'J': '9', 'U': '0', 'V': '0'
   };
   // Digits that are often misread as Letters
   const D_TO_L: Record<string, string> = { 
@@ -63,10 +57,17 @@ const normalizePlate = (rawPlate: string): string => {
     '4': 'A', '6': 'G', '7': 'T', '3': 'E', '9': 'J'
   };
   
+  const stateCodes = [
+    "AN", "AP", "AR", "AS", "BR", "CH", "CT", "DN", "DD", "DL", "GA", "GJ", "HR", "HP", 
+    "JK", "JH", "KA", "KL", "LA", "LD", "MP", "MH", "MN", "ML", "MZ", "NL", "OD", "PY", 
+    "PB", "RJ", "SK", "TN", "TS", "TR", "UP", "UK", "WB", "BH", "TG"
+  ];
+
+  // Helper to correct string based on map
   const fix = (s: string, m: Record<string, string>) => s.split('').map(c => m[c] || c).join('');
 
   // 1. Handle BH Series: YY BH #### XX (Example: 22 BH 1234 AA)
-  // Check if plate contains 'BH' specifically in positions 2-3 (0-indexed) or has 2 digits + BH
+  // Check if plate contains 'BH' or has 2 digits + BH
   if (plate.includes('BH') || (plate.length >= 8 && /^[0-9OIZ]{2}BH/.test(plate))) {
     const bhMatch = plate.match(/^([A-Z0-9]{2})BH([A-Z0-9]{4})([A-Z0-9]{1,2})$/);
     if (bhMatch) {
@@ -78,10 +79,10 @@ const normalizePlate = (rawPlate: string): string => {
   }
 
   // 2. Handle standard series: SS DD Series #### (Example: MH 12 AB 1234)
-  // SS: State Code (MUST be Letters, e.g., MH, DL, KA)
+  // SS: State Code (Positions 0-1) - MUST be Letters
   let state = fix(plate.substring(0, 2), D_TO_L);
   
-  // DD: District Code (MUST be Digits, e.g., 01, 12, 03)
+  // DD: District Code (Positions 2-3) - MUST be Digits
   let district = "";
   let rest = "";
   
@@ -92,29 +93,24 @@ const normalizePlate = (rawPlate: string): string => {
     district = fix(plate.substring(2), L_TO_D);
   }
 
-  // Series and Unique Number (e.g., CA 1234, AB 5678)
+  // Special Case: Some older plates might have SS #### AA (e.g. MH 1234 AB)
+  // But standard HSRP is SS DD Series Number
+  
+  // 3. Series and Unique Number
   if (rest.length > 0) {
-    // Case 1: Rest is entirely numeric-like (e.g., MH 12 1234)
-    if (/^[0-9OIZSBGQD]+$/.test(rest)) {
-      return `${state} ${district} ${fix(rest, L_TO_D)}`.trim();
-    }
+    // Determine the numeric tail (HSRP unique number is 1-4 digits)
+    const numericTailMatch = rest.match(/([00-9OIZSBGQD]{1,4})$/);
     
-    // Case 2: Standard split (Series + Number)
-    // Indian HSRP uniquely identifies plates by 1-4 numeric digits at the VERY end
-    const numericTailMatch = rest.match(/([0-9OIZSBGQD]+)$/);
     if (numericTailMatch) {
       const rawNum = numericTailMatch[0];
       const seriesPartRaw = rest.substring(0, rest.length - rawNum.length);
       
       // Series should be letters, Number should be digits
       const seriesPart = fix(seriesPartRaw, D_TO_L);
-      let numPart = fix(rawNum, L_TO_D);
+      const numPart = fix(rawNum, L_TO_D);
       
-      // HSRP unique numbers are strictly 1-4 digits. 
-      // If we got more than 4, the series might have been misread as digits
+      // If we have a very long numeric sequence after district, maybe series was misread as digits
       if (numPart.length > 4 && seriesPart === "") {
-        // Example: "125678" might be "AB 5678" if "12" misread for "AB"
-        // But more likely it's "AA 5678". We take last 4 as number if overall is long.
         const likelyNumPart = numPart.slice(-4);
         const likelySeriesPartRaw = numPart.slice(0, -4);
         const likelySeriesPart = fix(likelySeriesPartRaw, D_TO_L);
@@ -123,7 +119,7 @@ const normalizePlate = (rawPlate: string): string => {
 
       return `${state} ${district} ${seriesPart} ${numPart}`.replace(/\s+/g, ' ').trim();
     } else {
-      // If no numeric tail found, treat as series part (likely incomplete read)
+      // No numeric tail found, just treat the rest as series part misread
       return `${state} ${district} ${fix(rest, D_TO_L)}`.trim();
     }
   }
@@ -134,35 +130,27 @@ const normalizePlate = (rawPlate: string): string => {
 const detectionCache: Record<string, DetectionResult[]> = {};
 
 export const detectPlate = async (base64Image: string, retryCount = 0): Promise<DetectionResult[] | null> => {
-  const MAX_RETRIES = 6;
+  const MAX_RETRIES = 2; // Reduced for faster feedback
   
   const imageHash = hashString(base64Image);
   if (detectionCache[imageHash] && retryCount === 0) {
-    console.log("ANPR: Returning cached consistent results for identical image.");
     return detectionCache[imageHash];
   }
 
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
   try {
-    const blurScore = await calculateBlurScore(base64Image);
-    const isImageBlurry = blurScore < 250; 
-    
-    // Manage payload size for browser stability and enhance for OCR
-    const resizedOriginal = await resizeImage(base64Image, 1024, 0.6); 
-    const sharpened = await sharpenImage(resizedOriginal);
-    const contrastEnhanced = await enhanceContrast(sharpened);
-    const binarized = await adaptiveThresholding(contrastEnhanced);
-    
-    // We send three versions: 
-    // 1. Resized high-quality original (best for vehicle/color details)
-    // 2. Sharpened + Contrast Enhanced (best for reading dirty/low-contrast plates)
-    // 3. Adaptive Binarized (best for character extraction in harsh lighting/shadows)
-    const cleanOrig = resizedOriginal.split(',')[1] || resizedOriginal;
-    const cleanEnhanced = contrastEnhanced.split(',')[1] || contrastEnhanced;
-    const cleanBinarized = binarized.split(',')[1] || binarized;
+    // Start preprocessing and blur check in parallel
+    const [processed, blurScore] = await Promise.all([
+      fastPreprocess(base64Image, 800),
+      calculateBlurScore(base64Image)
+    ]);
 
-    console.log(`ANPR Blur Score: ${Math.round(blurScore)}, Payload: ${Math.round(resizedOriginal.length / 1024)} KB`);
+    const isImageBlurry = blurScore < 200; 
+    
+    // Send Original & Enhanced for better contrast detection
+    const cleanOrig = processed.original.split(',')[1] || processed.original;
+    const cleanEnhanced = processed.enhanced.split(',')[1] || processed.enhanced;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -170,57 +158,14 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
         {
           role: "user",
           parts: [
+            { inlineData: { mimeType: "image/jpeg", data: cleanOrig } },
+            { inlineData: { mimeType: "image/jpeg", data: cleanEnhanced } },
             {
-              inlineData: {
-                mimeType: "image/jpeg",
-                data: cleanOrig,
-              },
-            },
-            {
-              inlineData: {
-                mimeType: "image/jpeg",
-                data: cleanEnhanced,
-              },
-            },
-            {
-              inlineData: {
-                mimeType: "image/jpeg",
-                data: cleanBinarized,
-              },
-            },
-            {
-              text: `You are a world-class Automatic Number Plate Recognition (ANPR) system. 
-            
-            INPUT: Three images (Original, Enhanced Contrast, Adaptive Binarized).
-            MISSION: Extract ALL license plates from the frame with absolute precision.
-            
-            REASONING PROCESS:
-            1. Cross-reference all 3 versions of the image to resolve ambiguous characters.
-            2. Use the Binarized version specifically for edge definition if characters seem to merge.
-            3. Use the Enhanced Contrast version for reading plates in shadow or glare.
-            
-            INDIAN HSRP FORMAT KNOWLEDGE:
-            - Standard: [State Code: 2 Letters] [District Code: 2 Digits] [Series: 1-2 Letters] [Unique Number: 1-4 Digits]
-              Examples: 
-              * DL 01 CA 1234 (Delhi, District 01, Series CA, Number 1234)
-              * MH 12 AB 1234 (Maharashtra, District 12, Series AB, Number 1234)
-              * KA 01 MJ 0987 (Karnataka, District 01, Series MJ, Number 0987)
-            - Bharat (BH): [Year: 2 Digits] BH [Number: 4 Digits] [Series: 1-2 Alpha]
-            - State Codes: MH, DL, KA, TS, HR, UP, TN, WB, GJ, RJ, MP, BR, KL, AS, PB, AP, AR, AS, BR, CH, CT, DN, DD, GA, HP, JK, JH, LA, LD, MN, ML, MZ, NL, OD, PY, SK, TR, UK, TG.
-            
-            CHARACTER DISAMBIGUATION RULES:
-            - Position 1-2 (State): MUST be Letters. (e.g., '0'->'O', '1'->'I').
-            - Position 3-4 (District): MUST be Digits. (e.g., 'S'->'5', 'G'->'6').
-            - Last 4 characters (Number): Strictly Digits.
-            - Disambiguate '0' vs 'O', '1' vs 'I', '5' vs 'S', '8' vs 'B', '2' vs 'Z', '6' vs 'G' using these position-based rules.
-            
-            OTHER INSTRUCTIONS:
-            - Detect ALL visible plates.
-            - Focus only on the main registration number. Ignore "IND", holograms, or logos.
-            - Use the three images (Original, Enhanced, Binarized) to verify character shapes.
-            - Identify Vehicle: Make, Model, Color, and Type.
-            
-            OUTPUT: Valid JSON only.`,
+              text: `Identify ALL license plates and vehicles. 
+            License Plate Format: Indian HSRP. 
+            Vehicle Details: Provide CONCISE make and model only (e.g., 'Maruti Suzuki', 'Swift Dzire'). 
+            Avoid long descriptions or phrases. 
+            Deliver valid JSON.`,
             },
           ],
         },
@@ -238,10 +183,7 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
                 properties: {
                   plate: { type: Type.STRING },
                   confidence: { type: Type.NUMBER },
-                  status: {
-                    type: Type.STRING,
-                    description: "Status of detection: 'Valid', 'Low Confidence', or 'Blurry Image'",
-                  },
+                  status: { type: Type.STRING },
                   make: { type: Type.STRING },
                   model: { type: Type.STRING },
                   vehicle_type: { type: Type.STRING },
@@ -255,7 +197,6 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
                     },
                     required: ["x", "y", "width", "height"],
                   },
-                  is_blurry: { type: Type.BOOLEAN },
                 },
                 required: ["plate", "confidence", "status", "vehicle_type"],
               },
@@ -270,44 +211,33 @@ export const detectPlate = async (base64Image: string, retryCount = 0): Promise<
     const parsedData = JSON.parse(text);
     let detections: DetectionResult[] = parsedData.detections || [];
 
-    // programmatic validation map
-    const isValidDistrict = (d: string) => /^\d{2}$/.test(d);
-    const isValidState = (s: string) => STATE_CODES.includes(s);
-
-    detections = detections.map(det => {
-      // Apply advanced position-aware OCR normalization FIRST
-      const normalized = normalizePlate(det.plate);
-      det.plate = normalized;
-
-      // Programmatic Upgrade: If it matches Indian HSRP precisely, it's Valid
-      // Standard: XX DD SS #### or XX DD # or BH series
-      const isStandardFormat = /^[A-Z]{2}\s\d{2}\s[A-Z]*\s?\d{1,4}$/.test(normalized);
-      const isBHFormat = /^\d{2}\sBH\s\d{4}\s[A-Z]{1,2}$/.test(normalized);
-      
-      if (isStandardFormat || isBHFormat) {
-        // High quality match - upgrade status if model was unsure
-        if (det.status === 'Low Confidence' && det.confidence > 0.75) {
-          det.status = 'Valid';
-        }
+    const sanitizeField = (value: string | undefined) => {
+      if (!value) return value;
+      // If the string contains a period or more than 5 words, it might be a description.
+      // We try to take only the first few words if it's descriptive.
+      if (value.includes('.') || value.split(' ').length > 5) {
+        // Return only the first 2-3 words as a fallback if it looks like a sentence
+        return value.split(/[.!?]/)[0].split(' ').slice(0, 3).join(' ');
       }
-
-      // Final Blur adjustment - if extremely sharp, don't let model say blurry
-      if (blurScore > 400 && det.status === 'Blurry Image') {
-        det.status = 'Low Confidence';
-      }
-
-      return det;
-    });
+      return value;
+    };
 
     if (isImageBlurry) {
       detections = detections.map(d => ({
         ...d,
-        status: (d.status === 'Valid' && blurScore < 200) ? 'Low Confidence' : d.status,
+        status: d.status === 'Valid' ? 'Low Confidence' : d.status,
         is_blurry: true
       }));
     }
     
     detections.forEach(det => {
+      // Sanitize make and model
+      det.make = sanitizeField(det.make);
+      det.model = sanitizeField(det.model);
+      
+      // Apply advanced position-aware OCR normalization
+      det.plate = normalizePlate(det.plate);
+      
       if (det.bbox) {
         const centerX = det.bbox.x + det.bbox.width / 2;
         const centerY = det.bbox.y + det.bbox.height / 2;

@@ -31,7 +31,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
   const [showNewSearch, setShowNewSearch] = useState(false);
 
   const [notifications, setNotifications] = useState([
-    { id: 1, type: 'info', title: 'System Initialized', message: 'Vigilant ALPR engine is active and monitoring.', time: 'Just now', icon: ShieldCheck, color: 'text-primary' },
+    { id: 1, type: 'info', title: 'System Initialized', message: 'SmartPlate Monitor engine is active and monitoring.', time: 'Just now', icon: ShieldCheck, color: 'text-primary' },
   ]);
   const [hasUnread, setHasUnread] = useState(false);
 
@@ -88,7 +88,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
       <div className="px-6 mb-4 sm:mb-8 flex items-center justify-between">
         <div>
           <h2 className="text-xl font-black tracking-tighter text-on-surface font-headline uppercase leading-none">
-            Vigilant <span className="text-primary group-hover:text-primary-container transition-colors">ALPR</span>
+            SmartPlate <span className="text-primary group-hover:text-primary-container transition-colors">Monitor</span>
           </h2>
           <p className="text-[9px] font-bold text-outline uppercase tracking-[0.3em] mt-1.5 text-on-surface-variant/60">Smart Plate System</p>
         </div>
@@ -173,7 +173,7 @@ export default function Layout({ children, activeTab, setActiveTab, searchQuery,
             </button>
             <div className="flex items-baseline gap-3 min-w-0 overflow-hidden">
               <h1 className="text-base sm:text-lg font-black tracking-tighter text-on-surface font-headline leading-none truncate">
-                {navItems.find(i => i.id === activeTab)?.label || 'Vigilant'}
+                {navItems.find(i => i.id === activeTab)?.label || 'SmartPlate Monitor'}
               </h1>
             </div>
           </div>

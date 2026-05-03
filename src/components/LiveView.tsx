@@ -87,6 +87,8 @@ export default function LiveView() {
   const [zoom, setZoom] = useState(1);
   const [focus, setFocus] = useState(0);
   const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [systemLogs, setSystemLogs] = useState<any[]>([]);
+  const [activeLogTab, setActiveLogTab] = useState<'detections' | 'activity'>('detections');
   const [activeAlerts, setActiveAlerts] = useState<any[]>([]);
   const [stats, setStats] = useState({
     todayDetections: 0,
@@ -128,21 +130,32 @@ export default function LiveView() {
         // Transform back to the format expected by liveDetections
         const formatted = detections.map((d: any) => ({
           ...d,
-          plate: d.plate_number,
+          plate: d.plate_number || d.plate,
           id: d.id,
           timestamp: d.timestamp,
-          image: d.image_url,
+          image: d.image_url || d.image,
           confidence: d.confidence
         }));
         
-        setLiveDetections(formatted.slice(0, 10));
+        setLiveDetections(formatted.slice(0, 30)); // Increased for better history visibility on dashboard
       } catch (err) {
         console.error("Error fetching recent detections:", err);
       }
     };
 
+    const fetchSystemLogs = async () => {
+      try {
+        const res = await fetch('/api/logs');
+        const data = await res.json();
+        setSystemLogs(data || []);
+      } catch (err) {
+        console.error("Error fetching system logs:", err);
+      }
+    };
+
     fetchStats();
     fetchRecentDetections();
+    fetchSystemLogs();
     
     // Enumerate devices
     const getDevices = async () => {
@@ -166,7 +179,11 @@ export default function LiveView() {
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === 'NEW_DETECTION') {
-        const newDet = message.data;
+        const newDet = {
+          ...message.data,
+          plate: message.data.plate_number || message.data.plate,
+          image: message.data.image_url || message.data.image
+        };
         
         setLiveDetections(prev => {
           // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
@@ -176,15 +193,23 @@ export default function LiveView() {
           );
           
           if (isDuplicate) return prev;
-          return [newDet, ...prev].slice(0, 10);
+          return [newDet, ...prev].slice(0, 30);
         });
         
         // Refresh stats when new detection arrives
         fetchStats();
+        fetchSystemLogs(); // Refresh logs when new detection arrives
+      } else if (message.type === 'SYSTEM_ACTIVITY') {
+        const newLog = message.data;
+        setSystemLogs(prev => [newLog, ...prev].slice(0, 50));
       } else if (message.type === 'ALERT') {
-        const alertDet = message.data;
+        const alertDet = {
+          ...message.data,
+          plate: message.data.plate_number || message.data.plate,
+          image: message.data.image_url || message.data.image
+        };
         // Add to live detections first
-        setLiveDetections(prev => [alertDet, ...prev].slice(0, 10));
+        setLiveDetections(prev => [alertDet, ...prev].slice(0, 30));
         
         // Add to active alerts overlay
         setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
@@ -688,7 +713,7 @@ export default function LiveView() {
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-24 md:pb-12 px-1">
+    <div className="space-y-6 pb-24 md:pb-12 px-1">
       {/* Analytics Overview */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         {[
@@ -757,9 +782,9 @@ export default function LiveView() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 sm:gap-8">
         {/* Main Monitor Section */}
-        <div className="lg:col-span-2 xl:col-span-3 space-y-4 sm:space-y-6">
+        <div className="xl:col-span-3 space-y-4 sm:space-y-6">
           <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl sm:rounded-3xl overflow-hidden shadow-md relative group">
             {/* Header */}
             <div className="px-4 sm:px-8 py-3 sm:py-5 border-b border-outline-variant/5 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-surface-container-lowest relative z-20 gap-3 sm:gap-0">
@@ -1302,7 +1327,7 @@ export default function LiveView() {
             </div>
           )}
 
-          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col max-h-[500px] sm:max-h-[600px] xl:max-h-[85vh] overflow-hidden transition-all duration-300">
+          <div className="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl shadow-sm flex flex-col h-[calc(100vh-280px)] lg:h-[650px] overflow-hidden">
             <div className="px-4 py-3 sm:px-5 sm:py-4 border-b border-outline-variant/5 bg-surface-container-low/50 flex items-center justify-between">
               <div>
                 <h3 className="text-xs sm:text-sm font-bold uppercase tracking-widest text-on-surface leading-none mb-0.5">Recent Detections</h3>
@@ -1313,9 +1338,9 @@ export default function LiveView() {
               </div>
             </div>
             
-            <div className="flex-1 overflow-y-auto p-2.5 sm:p-4 space-y-2.5 sm:space-y-3 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 custom-scrollbar">
               {liveDetections.length === 0 ? (
-                <div className="flex flex-col items-center justify-center text-center py-12 px-8 opacity-40 min-h-[200px]">
+                <div className="h-full flex flex-col items-center justify-center text-center p-8 opacity-40">
                   <Database size={40} className="mb-4 text-slate-300" />
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Awaiting Detections...</p>
                 </div>
@@ -1331,7 +1356,7 @@ export default function LiveView() {
                         'border-l-4 border-l-error'
                       }`}
                     >
-                      <div className="flex justify-between items-start mb-1.5 sm:mb-2">
+                      <div className="flex justify-between items-start mb-2 sm:mb-3">
                         <span className={`text-lg font-bold tracking-widest group-hover:text-primary transition-colors flex items-center gap-2 font-headline leading-none ${
                           det.status === 'Valid' ? 'text-on-surface' :
                           det.status === 'Low Confidence' ? 'text-amber-700' :
@@ -1354,7 +1379,7 @@ export default function LiveView() {
                         </div>
                       </div>
                     
-                    <div className="grid grid-cols-2 gap-3 mb-2">
+                    <div className="grid grid-cols-2 gap-3 mb-4">
                       <div className="flex items-center gap-2 text-[10px] text-on-surface-variant font-bold uppercase tracking-tight opacity-70">
                         <Clock size={12} className="text-primary/60" />
                         <span>{new Date(det.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1366,7 +1391,7 @@ export default function LiveView() {
                     </div>
 
                     {det.make && (
-                      <div className="pt-3 border-t border-outline-variant/10 space-y-2">
+                      <div className="pt-4 border-t border-outline-variant/10 space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-tight leading-none truncate pr-2 opacity-80">
                             {det.vehicle_type ? `${det.vehicle_type}` : 'VEHICLE'} • <span className="text-primary font-black uppercase">{det.make} {det.model}</span>
@@ -1390,12 +1415,22 @@ export default function LiveView() {
         </div>
       </div>
 
-      {/* Full-width System Logs Table Section */}
+      {/* Full-width Detections & System Activity Section */}
       <section className="bg-surface-container-lowest rounded-2xl shadow-md border border-outline-variant/5 overflow-hidden mt-6">
         <div className="px-4 py-4 sm:px-6 sm:py-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-outline-variant/10">
-          <div>
-            <h3 className="text-base sm:text-lg font-bold text-on-surface">System Logs</h3>
-            <p className="text-[10px] sm:text-xs text-on-surface-variant font-medium mt-0.5">History of scanned plates</p>
+          <div className="flex items-center gap-4">
+            <button 
+              className={`text-base sm:text-lg font-bold transition-all ${activeLogTab === 'detections' ? 'text-on-surface underline decoration-primary decoration-2 underline-offset-4' : 'text-on-surface-variant opacity-50 hover:opacity-100'}`}
+              onClick={() => setActiveLogTab('detections')}
+            >
+              Recent Detections
+            </button>
+            <button 
+              className={`text-base sm:text-lg font-bold transition-all ${activeLogTab === 'activity' ? 'text-on-surface underline decoration-primary decoration-2 underline-offset-4' : 'text-on-surface-variant opacity-50 hover:opacity-100'}`}
+              onClick={() => setActiveLogTab('activity')}
+            >
+              System Activity
+            </button>
           </div>
           <div className="flex gap-2 sm:gap-3">
             <button 
@@ -1411,7 +1446,7 @@ export default function LiveView() {
                 doc.text(`Summary of Recent Detections`, 14, 35);
                 
                 const tableHeaders = [['Plate', 'Make', 'Model', 'Location', 'Timestamp', 'Confidence', 'Status']];
-                const tableData = liveDetections.slice(0, 20).map(row => [
+                const tableData = liveDetections.slice(0, 30).map(row => [
                   row.plate || 'N/A',
                   row.make || 'N/A',
                   row.model || 'N/A',
@@ -1448,78 +1483,116 @@ export default function LiveView() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-surface-container-low/50">
-                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden md:table-cell">Record ID</th>
-                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Vehicle Details</th>
-                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">License Plate</th>
-                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden lg:table-cell">Region</th>
-                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden sm:table-cell">Confidence</th>
-                <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-outline-variant/5">
-              {liveDetections.length > 0 ? (
-                liveDetections.map((row, i) => (
-                  <tr key={row.id || i} className="hover:bg-surface-container-low transition-colors group">
-                    <td className="px-4 py-3 sm:px-6 sm:py-4 text-[11px] font-mono font-bold text-on-surface-variant hidden md:table-cell selection:bg-primary selection:text-white">#{String(row.id || '').slice(-6).toUpperCase() || 'UNKSYS'}</td>
-                    <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-7 sm:w-12 sm:h-8 bg-black rounded border border-outline-variant/10 overflow-hidden shrink-0">
-                          {row.image_url || row.image ? (
-                            <img src={row.image_url || row.image} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-surface-container-low">
-                               <Car size={10} className="text-outline-variant opacity-20" />
-                            </div>
-                          )}
+        <div className="overflow-x-auto min-h-[300px]">
+          {activeLogTab === 'detections' ? (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low/50">
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden md:table-cell">Record ID</th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Vehicle Details</th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">License Plate</th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden lg:table-cell">Region</th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10 hidden sm:table-cell">Confidence</th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/5">
+                {liveDetections.length > 0 ? (
+                  liveDetections.map((row, i) => (
+                    <tr key={row.id || i} className="hover:bg-surface-container-low transition-colors group">
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 text-[11px] font-mono font-bold text-on-surface-variant hidden md:table-cell selection:bg-primary selection:text-white">#{String(row.id || '').slice(-6).toUpperCase() || 'UNKSYS'}</td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 whitespace-nowrap">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-7 sm:w-12 sm:h-8 bg-black rounded border border-outline-variant/10 overflow-hidden shrink-0">
+                            {row.image_url || row.image ? (
+                              <img src={row.image_url || row.image} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center bg-surface-container-low">
+                                 <Car size={10} className="text-outline-variant opacity-20" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-[10px] font-bold text-on-surface uppercase truncate max-w-[80px] sm:max-w-[120px] leading-tight">{row.make || 'Vehicle'}</span>
+                            <span className="text-[8px] font-medium text-on-surface-variant/60 uppercase truncate max-w-[80px] sm:max-w-[120px]">{row.model || 'Unknown'}</span>
+                          </div>
                         </div>
-                        <div className="flex flex-col">
-                          <span className="text-[10px] font-bold text-on-surface uppercase truncate max-w-[80px] sm:max-w-[120px] leading-tight">{row.make || 'Vehicle'}</span>
-                          <span className="text-[8px] font-medium text-on-surface-variant/60 uppercase">{row.model || 'Unknown'}</span>
+                      </td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4">
+                        <span className="inline-block px-2 sm:px-3 py-1 bg-on-surface text-surface rounded sm:rounded-lg font-headline font-black text-[11px] sm:text-sm tracking-widest shadow-sm">
+                          {row.plate}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-bold text-on-surface-variant uppercase hidden lg:table-cell">{row.location || 'Entrance A'}</td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 hidden sm:table-cell">
+                        <div className="flex items-center gap-2">
+                          <div className="w-12 h-1 bg-surface-container-high rounded-full overflow-hidden hidden xl:block">
+                            <div 
+                              className={`h-full ${row.confidence > 0.8 ? 'bg-primary' : row.confidence > 0.5 ? 'bg-amber-500' : 'bg-error'}`}
+                              style={{ width: `${(row.confidence || 0) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-black text-on-surface">{Math.round((row.confidence || 0) * 100)}%</span>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 sm:px-6 sm:py-4">
-                      <span className="inline-block px-2 sm:px-3 py-1 bg-on-surface text-surface rounded sm:rounded-lg font-headline font-black text-[11px] sm:text-sm tracking-widest shadow-sm">
-                        {row.plate}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-bold text-on-surface-variant uppercase hidden lg:table-cell">{row.location || 'Entrance A'}</td>
-                    <td className="px-4 py-3 sm:px-6 sm:py-4 hidden sm:table-cell">
-                      <div className="flex items-center gap-2">
-                        <div className="w-12 h-1 bg-surface-container-high rounded-full overflow-hidden hidden xl:block">
-                          <div 
-                            className={`h-full ${row.confidence > 0.8 ? 'bg-primary' : row.confidence > 0.5 ? 'bg-amber-500' : 'bg-error'}`}
-                            style={{ width: `${(row.confidence || 0) * 100}%` }}
-                          />
-                        </div>
-                        <span className="text-[10px] font-black text-on-surface">{Math.round((row.confidence || 0) * 100)}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 sm:px-6 sm:py-4">
-                      <span className={`inline-flex items-center px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest ${
-                        row.status === 'Valid' ? 'bg-primary/10 text-primary border border-primary/10' : 
-                        row.status === 'Low Confidence' ? 'bg-amber-500/10 text-amber-600 border border-amber-500/10' : 
-                        'bg-error/10 text-error border border-error/10'
-                      }`}>
-                        {row.status || 'Scanned'}
-                      </span>
+                      </td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4">
+                        <span className={`inline-flex items-center px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full text-[8px] sm:text-[9px] font-black uppercase tracking-widest ${
+                          row.status === 'Valid' ? 'bg-primary/10 text-primary border border-primary/10' : 
+                          row.status === 'Low Confidence' ? 'bg-amber-500/10 text-amber-600 border border-amber-500/10' : 
+                          'bg-error/10 text-error border border-error/10'
+                        }`}>
+                          {row.status || 'Scanned'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="px-10 py-12 text-center opacity-40">
+                      <Activity size={32} className="mx-auto mb-4" />
+                      <p className="text-xs font-bold uppercase tracking-widest">No plate records found.</p>
                     </td>
                   </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={6} className="px-10 py-12 text-center opacity-40">
-                    <Activity size={32} className="mx-auto mb-4" />
-                    <p className="text-xs font-bold uppercase tracking-widest">No plate records found.</p>
-                  </td>
+                )}
+              </tbody>
+            </table>
+          ) : (
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-surface-container-low/50">
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Timestamp</th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Activity Event</th>
+                  <th className="px-4 py-3 sm:px-6 sm:py-4 text-[10px] font-black text-on-surface-variant uppercase tracking-widest border-b border-outline-variant/10">Type</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-outline-variant/5">
+                {systemLogs.length > 0 ? (
+                  systemLogs.map((log, i) => (
+                    <tr key={log.id || i} className="hover:bg-surface-container-low transition-colors group">
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 text-[11px] font-mono text-on-surface-variant">{new Date(log.timestamp).toLocaleString()}</td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4 text-[11px] font-bold text-on-surface uppercase tracking-tight">{log.message}</td>
+                      <td className="px-4 py-3 sm:px-6 sm:py-4">
+                        <span className={`inline-block px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
+                          log.type === 'error' ? 'bg-error/10 text-error' : 
+                          log.type === 'warning' ? 'bg-amber-100 text-amber-700' :
+                          'bg-primary/10 text-primary'
+                        }`}>
+                          {log.type}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-12 text-center opacity-40">
+                      <Database size={32} className="mx-auto mb-4" />
+                      <p className="text-xs font-bold uppercase tracking-widest">No activity logs found.</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 

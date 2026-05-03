@@ -252,11 +252,11 @@ export default function History({ initialSearch = '' }: HistoryProps) {
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <div className="min-w-[150px]">
-                          <p className="text-xs font-black text-on-surface tracking-tight uppercase">
+                        <div className="max-w-[200px]">
+                          <p className="text-xs font-black text-on-surface tracking-tight uppercase truncate">
                             {row.make || 'General'} <span className="text-primary">{row.model || ''}</span>
                           </p>
-                          <p className="text-[10px] font-bold text-outline-variant uppercase mt-0.2 opacity-60">{row.vehicle_type || 'Vehicle'}</p>
+                          <p className="text-[10px] font-bold text-outline-variant uppercase mt-0.2 opacity-60 truncate">{row.vehicle_type || 'Vehicle'}</p>
                         </div>
                       </td>
                       <td className="px-6 py-4">
