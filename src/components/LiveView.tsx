@@ -40,6 +40,7 @@ import { detectPlate, saveDetectionToBackend, DetectionResult } from '../service
 import { lookupRegistryDetails } from '../services/registryService';
 import { noiseReduction, adaptiveThresholding, sharpenImage, enhanceContrast, binarizeImage } from '../utils/imageUtils';
 import { useSettings } from '../context/SettingsContext';
+import { supabase } from '../lib/supabase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -114,32 +115,71 @@ export default function LiveView() {
     const fetchStats = async () => {
       try {
         const res = await fetch('/api/stats');
-        const data = await res.json();
-        setStats(data);
+        if (res.ok) {
+          const data = await res.json();
+          setStats(data);
+        } else {
+          throw new Error('API failed');
+        }
       } catch (err) {
-        console.error("Error fetching stats:", err);
+        console.warn("Error fetching stats from API, using Supabase fallback:", err);
+        if (supabase) {
+          const { data, count } = await supabase
+            .from('vehicle_records')
+            .select('*', { count: 'exact' });
+          
+          if (data) {
+            setStats(prev => ({
+              ...prev,
+              todayDetections: count || 0,
+              avgConfidence: data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / (data.length || 1)
+            }));
+          }
+        }
       }
     };
 
     const fetchRecentDetections = async () => {
       try {
         const res = await fetch('/api/search');
-        const data = await res.json();
-        const detections = Array.isArray(data) ? data : (data.data || []);
-        
-        // Transform back to the format expected by liveDetections
-        const formatted = detections.map((d: any) => ({
-          ...d,
-          plate: d.plate_number || d.plate,
-          id: d.id,
-          timestamp: d.timestamp,
-          image: d.image_url || d.image,
-          confidence: d.confidence
-        }));
-        
-        setLiveDetections(formatted.slice(0, 30)); // Increased for better history visibility on dashboard
+        if (res.ok) {
+          const data = await res.json();
+          const detections = Array.isArray(data) ? data : (data.data || []);
+          
+          // Transform back to the format expected by liveDetections
+          const formatted = detections.map((d: any) => ({
+            ...d,
+            plate: d.plate_number || d.plate,
+            id: d.id,
+            timestamp: d.timestamp,
+            image: d.image_url || d.image,
+            confidence: d.confidence
+          }));
+          
+          setLiveDetections(formatted.slice(0, 30)); 
+        } else {
+          throw new Error('API failed');
+        }
       } catch (err) {
-        console.error("Error fetching recent detections:", err);
+        console.warn("Error fetching detections from API, using Supabase fallback:", err);
+        if (supabase) {
+          const { data } = await supabase
+            .from('vehicle_records')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(30);
+          
+          if (data) {
+            setLiveDetections(data.map((d: any) => ({
+              ...d,
+              plate: d.plate_number || d.plate,
+              id: d.id,
+              timestamp: d.timestamp,
+              image: d.image_url || d.image,
+              confidence: d.confidence
+            })));
+          }
+        }
       }
     };
 
@@ -176,63 +216,81 @@ export default function LiveView() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
     
+    const handleInboundDetection = (data: any) => {
+      const newDet = {
+        ...data,
+        plate: data.plate_number || data.plate,
+        image: data.image_url || data.image
+      };
+      
+      setLiveDetections(prev => {
+        // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
+        const isDuplicate = prev.some(d => 
+          d.plate === newDet.plate && 
+          (Math.abs(new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime()) < 2000)
+        );
+        
+        if (isDuplicate) return prev;
+        return [newDet, ...prev].slice(0, 30);
+      });
+      
+      // Refresh stats when new detection arrives
+      fetchStats();
+      fetchSystemLogs();
+    };
+
+    const handleInboundAlert = (data: any) => {
+      const alertDet = {
+        ...data,
+        plate: data.plate_number || data.plate,
+        image: data.image_url || data.image
+      };
+      // Add to live detections first
+      setLiveDetections(prev => [alertDet, ...prev].slice(0, 30));
+      
+      // Add to active alerts overlay
+      setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
+      
+      // Auto-remove alert from UI after 10 seconds
+      setTimeout(() => {
+        setActiveAlerts(prev => prev.filter(a => a.id !== alertDet.id));
+      }, 10000);
+
+      fetchStats();
+    };
+
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === 'NEW_DETECTION') {
-        const newDet = {
-          ...message.data,
-          plate: message.data.plate_number || message.data.plate,
-          image: message.data.image_url || message.data.image
-        };
-        
-        setLiveDetections(prev => {
-          // Temporal Deduplication: Ignore if same plate logged in last 2 seconds
-          const isDuplicate = prev.some(d => 
-            d.plate === newDet.plate && 
-            (new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime() < 2000)
-          );
-          
-          if (isDuplicate) return prev;
-          return [newDet, ...prev].slice(0, 30);
-        });
-        
-        // Refresh stats when new detection arrives
-        fetchStats();
-        fetchSystemLogs(); // Refresh logs when new detection arrives
+        handleInboundDetection(message.data);
       } else if (message.type === 'SYSTEM_ACTIVITY') {
         const newLog = message.data;
         setSystemLogs(prev => [newLog, ...prev].slice(0, 50));
       } else if (message.type === 'ALERT') {
-        const alertDet = {
-          ...message.data,
-          plate: message.data.plate_number || message.data.plate,
-          image: message.data.image_url || message.data.image
-        };
-        // Add to live detections first
-        setLiveDetections(prev => [alertDet, ...prev].slice(0, 30));
-        
-        // Add to active alerts overlay
-        setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
-        
-        // Auto-remove alert from UI after 10 seconds
-        setTimeout(() => {
-          setActiveAlerts(prev => prev.filter(a => a.id !== alertDet.id));
-        }, 10000);
-
-        // Visual/Audio Cue (simulated)
-        if (typeof window !== 'undefined') {
-          console.warn(`SURVEILLANCE ALERT: ${alertDet.plate} matches ${alertDet.alertType}`);
-        }
-        
-        fetchStats();
+        handleInboundAlert(message.data);
       } else if (message.type === 'SYSTEM_HEALTH') {
         setSystemHealth(message.data);
       }
     };
 
+    // Supabase Real-time fallback
+    let channel: any = null;
+    if (supabase) {
+      channel = supabase
+        .channel('liveview_updates')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_records' }, (payload) => {
+          handleInboundDetection(payload.new);
+          if (payload.new.status === 'Watchlist' || payload.new.status === 'Unauthorized') {
+            handleInboundAlert(payload.new);
+          }
+        })
+        .subscribe();
+    }
+
     wsRef.current = ws;
     return () => {
       ws.close();
+      if (channel) supabase?.removeChannel(channel);
       clearInterval(timer);
     };
   }, []);

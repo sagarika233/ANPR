@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type, ThinkingLevel } from "@google/genai";
 import { fastPreprocess, calculateBlurScore } from "../utils/imageUtils";
+import { supabase } from "../lib/supabase";
 
 export interface DetectionResult {
   plate: string;
@@ -353,8 +354,35 @@ export const saveDetectionToBackend = async (detection: DetectionResult) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(detection),
     });
-    return await response.json();
+    
+    if (response.ok) return await response.json();
+    throw new Error('Backend unavailable');
   } catch (error) {
-    console.error("Error saving detection:", error);
+    console.warn("Error saving detection to backend, trying Supabase direct:", error);
+    
+    // Direct Supabase Fallback for static builds (GitHub Pages context)
+    if (supabase) {
+      try {
+        const { data, error: sbError } = await supabase
+          .from('vehicle_records')
+          .insert([{
+            plate_number: detection.plate.toUpperCase(),
+            confidence: detection.confidence || 0,
+            vehicle_type: detection.vehicle_type || 'Unknown',
+            make: detection.make || 'Unknown',
+            model: detection.model || 'Unknown',
+            location: 'Smart Capture',
+            status: detection.status || "Detected",
+            image_url: detection.image,
+            timestamp: new Date().toISOString()
+          }])
+          .select();
+
+        if (sbError) throw sbError;
+        return { success: true, id: data?.[0]?.id };
+      } catch (sbErr) {
+        console.error("Supabase fallback failed:", sbErr);
+      }
+    }
   }
 };

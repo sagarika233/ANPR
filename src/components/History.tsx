@@ -14,6 +14,8 @@ import {
   Database
 } from 'lucide-react';
 
+import { supabase } from '../lib/supabase';
+
 interface HistoryProps {
   initialSearch?: string;
 }
@@ -26,28 +28,50 @@ export default function History({ initialSearch = '' }: HistoryProps) {
   const [noDataMessage, setNoDataMessage] = useState('');
   const [viewMode, setViewMode] = useState<'present' | 'search'>(initialSearch ? 'search' : 'present');
 
-  // WebSocket for Live "Present" Updates
+  // WebSocket & Supabase Real-time for Live "Present" Updates
   useEffect(() => {
+    // Protocol-based WebSocket for standard dev/server environments
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
+
+    const handleNewDetection = (newDet: any) => {
+      setPresentResults(prev => {
+        // Deduplicate locally
+        const isDuplicate = prev.some(d => 
+          d.plate === (newDet.plate_number || newDet.plate) && 
+          Math.abs(new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime()) < 5000
+        );
+        if (isDuplicate) return prev;
+        return [{
+          ...newDet,
+          plate: newDet.plate_number || newDet.plate,
+          image: newDet.image_url || newDet.image
+        }, ...prev].slice(0, 50);
+      });
+    };
 
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === 'NEW_DETECTION' || message.type === 'ALERT') {
-        const newDet = message.data;
-        setPresentResults(prev => {
-          // Deduplicate locally
-          const isDuplicate = prev.some(d => 
-            d.plate === newDet.plate && 
-            Math.abs(new Date(newDet.timestamp).getTime() - new Date(d.timestamp).getTime()) < 5000
-          );
-          if (isDuplicate) return prev;
-          return [newDet, ...prev].slice(0, 50);
-        });
+        handleNewDetection(message.data);
       }
     };
 
-    return () => ws.close();
+    // Supabase Real-time Fallback (Crucial for GitHub/Static Builds)
+    let channel: any = null;
+    if (supabase) {
+      channel = supabase
+        .channel('public:vehicle_records')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_records' }, (payload) => {
+          handleNewDetection(payload.new);
+        })
+        .subscribe();
+    }
+
+    return () => {
+      ws.close();
+      if (channel) supabase?.removeChannel(channel);
+    };
   }, []);
 
   const fetchSearchResult = async (query: string) => {
@@ -60,19 +84,57 @@ export default function History({ initialSearch = '' }: HistoryProps) {
         ? `/api/search?plate=${encodeURIComponent(query)}`
         : `/api/search`; // Gets last 20 results if no query
       const response = await fetch(url);
-      const data = await response.json();
       
+      if (!response.ok) throw new Error('API unavailable');
+      
+      const data = await response.json();
       const results = Array.isArray(data) ? data : (data.data || []);
       
       if (query.trim() && results.length === 0) {
         setNoDataMessage(`No records found for "${query}" in database.`);
         setHistoryData([]);
       } else {
-        setHistoryData(results);
+        setHistoryData(results.map((r: any) => ({
+          ...r,
+          plate: r.plate_number || r.plate,
+          image: r.image_url || r.image
+        })));
       }
     } catch (error) {
-      console.error("Error searching records:", error);
-      setNoDataMessage('Database integration failed. Please try again.');
+      console.warn("API Search failed, trying Supabase direct:", error);
+      
+      if (supabase) {
+        try {
+          let sbQuery: any = supabase
+            .from('vehicle_records')
+            .select('*')
+            .order('timestamp', { ascending: false });
+
+          if (query.trim()) {
+            sbQuery = sbQuery.ilike('plate_number', `%${query}%`);
+          }
+
+          const { data, error: sbError } = await sbQuery.limit(50);
+          if (sbError) throw sbError;
+
+          const results = data || [];
+          if (query.trim() && results.length === 0) {
+            setNoDataMessage(`No records found for "${query}" in Supabase.`);
+            setHistoryData([]);
+          } else {
+            setHistoryData(results.map(r => ({
+              ...r,
+              plate: r.plate_number || r.plate,
+              image: r.image_url || r.image
+            })));
+          }
+          return;
+        } catch (sbErr) {
+          console.error("Supabase fallback search failed:", sbErr);
+        }
+      }
+      
+      setNoDataMessage('Database connection failed. Please ensure Supabase keys are configured.');
     } finally {
       setIsSearching(false);
     }
@@ -83,6 +145,7 @@ export default function History({ initialSearch = '' }: HistoryProps) {
     const fetchRecent = async () => {
       try {
         const response = await fetch('/api/search');
+        if (!response.ok) throw new Error('API unavailable');
         const data = await response.json();
         const results = Array.isArray(data) ? data : (data.data || []);
         setPresentResults(results.map(r => ({
@@ -94,7 +157,32 @@ export default function History({ initialSearch = '' }: HistoryProps) {
           confidence: r.confidence
         })));
       } catch (err) {
-        console.error("Failed to fetch initial present results");
+        console.warn("Failed to fetch initial results via API, trying Supabase direct");
+        
+        if (supabase) {
+          try {
+            const { data, error } = await supabase
+              .from('vehicle_records')
+              .select('*')
+              .order('timestamp', { ascending: false })
+              .limit(50);
+            
+            if (error) throw error;
+
+            if (data) {
+              setPresentResults(data.map(r => ({
+                ...r,
+                plate: r.plate_number || r.plate,
+                id: r.id,
+                timestamp: r.timestamp,
+                image: r.image_url || r.image,
+                confidence: r.confidence
+              })));
+            }
+          } catch (sbErr) {
+            console.error("Supabase fallback fetchRecent failed:", sbErr);
+          }
+        }
       }
     };
     

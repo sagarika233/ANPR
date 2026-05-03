@@ -22,6 +22,7 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from 'recharts';
+import { supabase } from '../lib/supabase';
 
 export default function Analytics() {
   const [historyData, setHistoryData] = useState<any[]>([]);
@@ -65,15 +66,38 @@ export default function Analytics() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/detect`);
     
+    const handleNewRecord = (record: any) => {
+      const formatted = {
+        ...record,
+        plate: record.plate_number || record.plate,
+        image: record.image_url || record.image
+      };
+      setHistoryData(prev => [formatted, ...prev]);
+      fetchStats();
+    };
+
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === 'NEW_DETECTION') {
-        setHistoryData(prev => [message.data, ...prev]);
-        fetchStats();
+        handleNewRecord(message.data);
       }
     };
 
-    return () => ws.close();
+    // Supabase Real-time Fallback
+    let channel: any = null;
+    if (supabase) {
+      channel = supabase
+        .channel('analytics_realtime')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_records' }, (payload) => {
+          handleNewRecord(payload.new);
+        })
+        .subscribe();
+    }
+
+    return () => {
+      ws.close();
+      if (channel) supabase?.removeChannel(channel);
+    };
   }, []);
 
   const stats = useMemo(() => {
