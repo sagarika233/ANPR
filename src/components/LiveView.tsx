@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   StopCircle, 
@@ -106,92 +106,103 @@ export default function LiveView() {
   const wsRef = useRef<WebSocket | null>(null);
   const detectionIntervalRef = useRef<number | null>(null);
 
-  // WebSocket Connection
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date().toLocaleTimeString());
-    }, 1000);
-
-    const fetchStats = async () => {
-      try {
-        const res = await fetch('/api/stats');
-        if (res.ok) {
-          const data = await res.json();
-          setStats(data);
-        } else {
-          throw new Error('API failed');
-        }
-      } catch (err) {
-        console.warn("Error fetching stats from API, using Supabase fallback:", err);
-        if (supabase) {
-          const { data, count } = await supabase
-            .from('vehicle_records')
-            .select('*', { count: 'exact' });
-          
-          if (data) {
-            setStats(prev => ({
-              ...prev,
-              todayDetections: count || 0,
-              avgConfidence: data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / (data.length || 1)
-            }));
-          }
-        }
+  const fetchRecentDetections = useCallback(async () => {
+    try {
+      const res = await fetch('/api/search');
+      if (res.ok) {
+        const data = await res.json();
+        const detections = Array.isArray(data) ? data : (data.data || []);
+        
+        const formatted = detections.map((d: any) => ({
+          ...d,
+          plate: d.plate_number || d.plate,
+          id: d.id,
+          timestamp: d.timestamp,
+          image: d.image_url || d.image,
+          confidence: d.confidence
+        }));
+        
+        setLiveDetections(formatted.slice(0, 30)); 
+      } else {
+        throw new Error('API failed');
       }
-    };
-
-    const fetchRecentDetections = async () => {
-      try {
-        const res = await fetch('/api/search');
-        if (res.ok) {
-          const data = await res.json();
-          const detections = Array.isArray(data) ? data : (data.data || []);
-          
-          // Transform back to the format expected by liveDetections
-          const formatted = detections.map((d: any) => ({
+    } catch (err) {
+      if (supabase) {
+        const { data } = await supabase
+          .from('vehicle_records')
+          .select('*')
+          .order('timestamp', { ascending: false })
+          .limit(30);
+        
+        if (data) {
+          setLiveDetections(data.map((d: any) => ({
             ...d,
             plate: d.plate_number || d.plate,
             id: d.id,
             timestamp: d.timestamp,
             image: d.image_url || d.image,
             confidence: d.confidence
-          }));
-          
-          setLiveDetections(formatted.slice(0, 30)); 
-        } else {
-          throw new Error('API failed');
-        }
-      } catch (err) {
-        console.warn("Error fetching detections from API, using Supabase fallback:", err);
-        if (supabase) {
-          const { data } = await supabase
-            .from('vehicle_records')
-            .select('*')
-            .order('timestamp', { ascending: false })
-            .limit(30);
-          
-          if (data) {
-            setLiveDetections(data.map((d: any) => ({
-              ...d,
-              plate: d.plate_number || d.plate,
-              id: d.id,
-              timestamp: d.timestamp,
-              image: d.image_url || d.image,
-              confidence: d.confidence
-            })));
-          }
+          })));
         }
       }
-    };
+    }
+  }, []);
 
-    const fetchSystemLogs = async () => {
-      try {
-        const res = await fetch('/api/logs');
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/stats');
+      if (res.ok) {
+        const data = await res.json();
+        setStats(data);
+      } else {
+        throw new Error('API failed');
+      }
+    } catch (err) {
+      if (supabase) {
+        // Correct "Today" filter for stats
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const { data } = await supabase
+          .from('vehicle_records')
+          .select('*');
+        
+        if (data) {
+          // Calculate stats locally
+          const todayCount = data.filter(r => new Date(r.timestamp) >= startOfDay).length;
+          const avgConf = data.length > 0 
+            ? data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / data.length
+            : 0;
+          const alerts = data.filter(r => (r.status === 'Watchlist' || r.status === 'Unauthorized')).length;
+
+          setStats(prev => ({
+            ...prev,
+            todayDetections: todayCount,
+            avgConfidence: avgConf,
+            watchlistHits: alerts
+          }));
+        }
+      }
+    }
+  }, []);
+
+  const fetchSystemLogs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/logs');
+      if (res.ok) {
         const data = await res.json();
         setSystemLogs(data || []);
-      } catch (err) {
-        console.error("Error fetching system logs:", err);
       }
-    };
+    } catch (err) {
+      // System logs are mostly server-side info
+    }
+  }, []);
+
+  // WebSocket Connection
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date().toLocaleTimeString());
+    }, 1000);
 
     fetchStats();
     fetchRecentDetections();

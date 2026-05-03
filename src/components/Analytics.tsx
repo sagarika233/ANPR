@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { 
   Eye, 
@@ -37,28 +37,77 @@ export default function Analytics() {
     confidenceChange: 0
   });
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res = await fetch('/api/stats');
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/stats');
+      if (res.ok) {
         const data = await res.json();
         setStatsSummary(data);
-      } catch (err) {
-        console.error("Error fetching stats:", err);
+      } else {
+        throw new Error('API failed');
       }
-    };
+    } catch (err) {
+      if (supabase) {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
 
-    const fetchHistory = async () => {
-      try {
-        const response = await fetch('/api/history');
-        const data = await response.json();
-        setHistoryData(data);
-      } catch (error) {
-        console.error("Error fetching history:", error);
-      } finally {
-        setIsLoading(false);
+        const { data } = await supabase
+          .from('vehicle_records')
+          .select('*');
+        
+        if (data) {
+          const todayCount = data.filter(r => new Date(r.timestamp) >= startOfDay).length;
+          const avgConf = data.length > 0 
+            ? data.reduce((acc, curr) => acc + (curr.confidence || 0), 0) / data.length
+            : 0;
+          const alerts = data.filter(r => (r.status === 'Watchlist' || r.status === 'Unauthorized')).length;
+
+          setStatsSummary(prev => ({
+            ...prev,
+            todayDetections: todayCount,
+            avgConfidence: avgConf,
+            watchlistHits: alerts
+          }));
+        }
       }
-    };
+    }
+  }, []);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const response = await fetch('/api/history');
+      if (response.ok) {
+        const data = await response.json();
+        setHistoryData(data.map((r: any) => ({
+          ...r,
+          plate: r.plate_number || r.plate,
+          image: r.image_url || r.image
+        })));
+      } else {
+        throw new Error('API failed');
+      }
+    } catch (error) {
+      if (supabase) {
+        const { data } = await supabase
+          .from('vehicle_records')
+          .select('*')
+          .order('timestamp', { ascending: false })
+          .limit(100);
+        
+        if (data) {
+          setHistoryData(data.map((r: any) => ({
+            ...r,
+            plate: r.plate_number || r.plate,
+            image: r.image_url || r.image
+          })));
+        }
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
     fetchHistory();
     fetchStats();
 
