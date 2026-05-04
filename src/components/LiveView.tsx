@@ -75,6 +75,8 @@ export default function LiveView() {
   const [hasNetworkError, setHasNetworkError] = useState(false);
   const [quotaUsed, setQuotaUsed] = useState(0);
   const [liveDetections, setLiveDetections] = useState<any[]>([]);
+  const [sessionScans, setSessionScans] = useState(0);
+  const [sessionAlertsCount, setSessionAlertsCount] = useState(0);
   const [currentDetections, setCurrentDetections] = useState<DetectionResult[]>([]);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -268,6 +270,9 @@ export default function LiveView() {
         );
         
         if (isDuplicate) return prev;
+        
+        // Only increment session count for unique detections in this session
+        setSessionScans(s => s + 1);
         return [newDet, ...prev].slice(0, 30);
       });
       
@@ -281,8 +286,20 @@ export default function LiveView() {
         plate: data.plate_number || data.plate,
         image: data.image_url || data.image
       };
-      // Add to live detections first
-      setLiveDetections(prev => [alertDet, ...prev].slice(0, 30));
+      
+      // Only increment if not duplicate
+      setLiveDetections(prev => {
+        const isDuplicate = prev.some(d => 
+          d.plate === alertDet.plate && 
+          (Math.abs(new Date(alertDet.timestamp).getTime() - new Date(d.timestamp).getTime()) < 2000)
+        );
+        
+        if (isDuplicate) return prev;
+        
+        setSessionScans(s => s + 1);
+        setSessionAlertsCount(a => a + 1);
+        return [alertDet, ...prev].slice(0, 30);
+      });
       
       // Add to active alerts overlay
       setActiveAlerts(prev => [alertDet, ...prev].slice(0, 3));
@@ -869,8 +886,8 @@ export default function LiveView() {
         {[
           { 
             label: "Scans", 
-            value: (stats?.todayDetections ?? 0).toLocaleString(), 
-            change: "Today", 
+            value: sessionScans.toLocaleString(), 
+            change: "Session", 
             icon: Car, 
             bg: "bg-primary-fixed",
             text: "text-on-primary-fixed",
@@ -889,8 +906,8 @@ export default function LiveView() {
           },
           { 
             label: "Alerts", 
-            value: (stats?.watchlistHits ?? 0).toString(), 
-            change: "Hits", 
+            value: sessionAlertsCount.toString(), 
+            change: "Session Hits", 
             icon: AlertOctagon, 
             bg: "bg-error-container",
             text: "text-on-error-container",
