@@ -77,6 +77,7 @@ export default function LiveView() {
   const [liveDetections, setLiveDetections] = useState<any[]>([]);
   const [sessionScans, setSessionScans] = useState(0);
   const [sessionAlertsCount, setSessionAlertsCount] = useState(0);
+  const [sessionTotalConfidence, setSessionTotalConfidence] = useState(0);
   const [latestScanCount, setLatestScanCount] = useState<number | null>(null);
   const [currentDetections, setCurrentDetections] = useState<DetectionResult[]>([]);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
@@ -274,6 +275,7 @@ export default function LiveView() {
         
         // Only increment session count for unique detections in this session
         setSessionScans(s => s + 1);
+        setSessionTotalConfidence(c => c + (newDet.confidence || 0));
         return [newDet, ...prev].slice(0, 30);
       });
       
@@ -299,6 +301,7 @@ export default function LiveView() {
         
         setSessionScans(s => s + 1);
         setSessionAlertsCount(a => a + 1);
+        setSessionTotalConfidence(c => c + (alertDet.confidence || 0));
         return [alertDet, ...prev].slice(0, 30);
       });
       
@@ -928,8 +931,10 @@ export default function LiveView() {
           },
           { 
             label: "Conf", 
-            value: `${((stats?.avgConfidence || 0) * 100).toFixed(0)}%`, 
-            change: "Avg", 
+            value: sessionScans > 0 
+              ? `${((sessionTotalConfidence / sessionScans) * 100).toFixed(0)}%`
+              : '0%', 
+            change: "Session Avg", 
             icon: LineChart, 
             bg: "bg-secondary-container",
             text: "text-on-secondary-container",

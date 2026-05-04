@@ -79,10 +79,14 @@ export default function History({ initialSearch = '' }: HistoryProps) {
     setNoDataMessage('');
     setViewMode(query.trim() ? 'search' : 'present');
     
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDayISO = startOfDay.toISOString();
+
     try {
       const url = query.trim() 
-        ? `/api/search?plate=${encodeURIComponent(query)}`
-        : `/api/search`; // Gets last 20 results if no query
+        ? `/api/search?plate=${encodeURIComponent(query)}&start=${startOfDayISO}`
+        : `/api/search?start=${startOfDayISO}`; // Gets today's results
       const response = await fetch(url);
       
       if (!response.ok) throw new Error('API unavailable');
@@ -108,6 +112,7 @@ export default function History({ initialSearch = '' }: HistoryProps) {
           let sbQuery: any = supabase
             .from('vehicle_records')
             .select('*')
+            .gte('timestamp', startOfDayISO)
             .order('timestamp', { ascending: false });
 
           if (query.trim()) {
@@ -143,8 +148,12 @@ export default function History({ initialSearch = '' }: HistoryProps) {
   // On mount, fetch recent records to populate "present" results if empty
   useEffect(() => {
     const fetchRecent = async () => {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDayISO = startOfDay.toISOString();
+
       try {
-        const response = await fetch('/api/search');
+        const response = await fetch(`/api/search?start=${startOfDayISO}`);
         if (!response.ok) throw new Error('API unavailable');
         const data = await response.json();
         const results = Array.isArray(data) ? data : (data.data || []);
@@ -164,6 +173,7 @@ export default function History({ initialSearch = '' }: HistoryProps) {
             const { data, error } = await supabase
               .from('vehicle_records')
               .select('*')
+              .gte('timestamp', startOfDayISO)
               .order('timestamp', { ascending: false })
               .limit(50);
             
