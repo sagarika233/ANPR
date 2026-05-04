@@ -19,31 +19,13 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          #cache: 'npm'
+          node-version: 20
+          cache: 'npm'
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 build-essential
-
-      #- name: Install dependencies
-        #run: npm ci --no-audit --no-fund
-
-      - name: Clean and reinstall dependencies
-        run: |
-          rm -rf node_modules package-lock.json
-          npm cache clean --force
-          npm install
-
-      #- name: Rebuild native modules
-        #run: npm rebuild
-        #env:
-          # These secrets must be added in GitHub Repository Settings
-          #VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          #VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-          # If you use Gemini on the client (not recommended, but for static builds sometimes needed)
-          # VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+          rm -rf node_modules
+          npm install --os=linux --cpu=x64
 
       - name: Build
         run: npm run build

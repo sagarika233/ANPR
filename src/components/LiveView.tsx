@@ -107,8 +107,12 @@ export default function LiveView() {
   const detectionIntervalRef = useRef<number | null>(null);
 
   const fetchRecentDetections = useCallback(async () => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDayISO = startOfDay.toISOString();
+
     try {
-      const res = await fetch('/api/search');
+      const res = await fetch(`/api/search?start=${startOfDayISO}`);
       if (res.ok) {
         const data = await res.json();
         const detections = Array.isArray(data) ? data : (data.data || []);
@@ -131,6 +135,7 @@ export default function LiveView() {
         const { data } = await supabase
           .from('vehicle_records')
           .select('*')
+          .gte('timestamp', startOfDayISO)
           .order('timestamp', { ascending: false })
           .limit(30);
         
@@ -206,8 +211,12 @@ export default function LiveView() {
   }, [activeCameras.length]);
 
   const fetchSystemLogs = useCallback(async () => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startOfDayISO = startOfDay.toISOString();
+
     try {
-      const res = await fetch('/api/logs');
+      const res = await fetch(`/api/logs?start=${startOfDayISO}`);
       if (res.ok) {
         const data = await res.json();
         setSystemLogs(data || []);
@@ -224,8 +233,6 @@ export default function LiveView() {
     }, 1000);
 
     fetchStats();
-    fetchRecentDetections();
-    fetchSystemLogs();
     
     // Enumerate devices
     const getDevices = async () => {
@@ -266,7 +273,6 @@ export default function LiveView() {
       
       // Refresh stats when new detection arrives
       fetchStats();
-      fetchSystemLogs();
     };
 
     const handleInboundAlert = (data: any) => {
@@ -1097,44 +1103,65 @@ export default function LiveView() {
                             {currentDetections.map((det, idx) => {
                               if (!det.bbox) return null;
                               
-                              const aspectRatio = det.bbox.width / det.bbox.height;
-                              const centerX = det.bbox.x + det.bbox.width / 2;
-                              const centerY = det.bbox.y + det.bbox.height / 2;
+                              const rawWidth = det.bbox.width;
+                              const rawHeight = det.bbox.height;
+                              const rawAspectRatio = rawWidth / rawHeight;
+                              const centerX = det.bbox.x + rawWidth / 2;
+                              const centerY = det.bbox.y + rawHeight / 2;
                               
-                              // Dynamic Sizing: Harmonize with standard HSRP aspect ratios
-                              // Long: 4.1, Short/Motorcycle: 1.7
-                              const isLong = aspectRatio > 3.0;
-                              const pad = det.confidence > 0.95 ? 1.04 : 1.08;
+                              // Indian HSRP Standard Aspect Ratio Correction
+                              // Rectangular (Cars/Trucks): ~4.2:1 (500mm x 120mm)
+                              // Square/Two-line (Buses/Motorcycles): ~1.7:1 - 2.0:1
+                              let targetRatio = rawAspectRatio;
+                              if (rawAspectRatio > 3.0) {
+                                targetRatio = 4.2; 
+                              } else if (rawAspectRatio > 1.2) {
+                                targetRatio = 1.8;
+                              }
+
+                              // Scale dimensions to fit the target ratio while centering
+                              let drawWidth = rawWidth;
+                              let drawHeight = rawHeight;
                               
-                              const drawWidth = det.bbox.width * pad;
-                              const drawHeight = det.bbox.height * pad;
+                              if (rawAspectRatio > targetRatio) {
+                                // Too wide compared to target, adjust height upward
+                                drawHeight = rawWidth / targetRatio;
+                              } else {
+                                // Too tall compared to target, adjust width upward
+                                drawWidth = rawHeight * targetRatio;
+                              }
+                              
+                              // Apply adaptive padding based on confidence
+                              const pad = det.confidence > 0.9 ? 1.15 : 1.25;
+                              drawWidth *= pad;
+                              drawHeight *= pad;
 
                               return (
                                 <motion.div 
                                   key={`${det.plate}-${idx}`}
-                                  initial={{ opacity: 0, scale: 0.98 }}
+                                  initial={{ opacity: 0, scale: 0.9 }}
                                   animate={{ 
                                     opacity: 1, 
                                     scale: 1,
                                     boxShadow: activeAlerts.some(a => a.plate === det.plate) 
                                       ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
-                                      : '0 0 15px rgba(59,130,246,0.25)'
+                                      : '0 0 15px rgba(59,130,246,0.4)'
                                   }}
                                   transition={{ 
                                     boxShadow: { repeat: Infinity, duration: 1.5 }
                                   }}
-                                  exit={{ opacity: 0, scale: 0.98 }}
-                                  className={`absolute transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
+                                  exit={{ opacity: 0, scale: 0.95 }}
+                                  className={`absolute transition-all duration-500 transform -translate-x-1/2 -translate-y-1/2 ${
                                     activeAlerts.some(a => a.plate === det.plate)
-                                      ? 'border-error border-[1.5px] z-50'
-                                      : 'border-blue-400/70 border-[1px] z-40'
+                                      ? 'border-error border-[2px] z-50'
+                                      : 'border-blue-400 border-[1.5px] z-40'
                                   }`}
                                   style={{
                                     left: `${(centerX / 1000) * 100}%`,
                                     top: `${(centerY / 1000) * 100}%`,
                                     width: `${(drawWidth / 1000) * 100}%`,
                                     height: `${(drawHeight / 1000) * 100}%`,
-                                    borderRadius: '0px'
+                                    borderRadius: '2px'
                                   }}
                                 >
                                   {/* Technical Framing Brackets */}
@@ -1199,43 +1226,59 @@ export default function LiveView() {
                                   {currentDetections.map((det, idx) => {
                                     if (!det.bbox) return null;
                                     
-                                    const aspectRatio = det.bbox.width / det.bbox.height;
-                                    const centerX = det.bbox.x + det.bbox.width / 2;
-                                    const centerY = det.bbox.y + det.bbox.height / 2;
+                                    const rawWidth = det.bbox.width;
+                                    const rawHeight = det.bbox.height;
+                                    const rawAspectRatio = rawWidth / rawHeight;
+                                    const centerX = det.bbox.x + rawWidth / 2;
+                                    const centerY = det.bbox.y + rawHeight / 2;
                                     
-                                    // Dynamic Sizing
-                                    const isLong = aspectRatio > 3.0;
-                                    const pad = det.confidence > 0.95 ? 1.04 : 1.08;
+                                    // Indian HSRP Standard Aspect Ratio Correction
+                                    let targetRatio = rawAspectRatio;
+                                    if (rawAspectRatio > 3.0) {
+                                      targetRatio = 4.2; 
+                                    } else if (rawAspectRatio > 1.2) {
+                                      targetRatio = 1.8;
+                                    }
+
+                                    let drawWidth = rawWidth;
+                                    let drawHeight = rawHeight;
                                     
-                                    const drawWidth = det.bbox.width * pad;
-                                    const drawHeight = det.bbox.height * pad;
+                                    if (rawAspectRatio > targetRatio) {
+                                      drawHeight = rawWidth / targetRatio;
+                                    } else {
+                                      drawWidth = rawHeight * targetRatio;
+                                    }
+                                    
+                                    const pad = det.confidence > 0.9 ? 1.15 : 1.25;
+                                    drawWidth *= pad;
+                                    drawHeight *= pad;
 
                                     return (
                                       <motion.div 
                                         key={`${det.plate}-${idx}`}
-                                        initial={{ opacity: 0, scale: 0.98 }}
+                                        initial={{ opacity: 0, scale: 0.9 }}
                                         animate={{ 
                                           opacity: 1, 
                                           scale: 1,
                                           boxShadow: activeAlerts.some(a => a.plate === det.plate) 
                                             ? ['0 0 10px #ef4444', '0 0 30px #ef4444', '0 0 10px #ef4444'] 
-                                            : '0 0 15px rgba(59,130,246,0.25)'
+                                            : '0 0 15px rgba(59,130,246,0.4)'
                                         }}
                                         transition={{ 
                                           boxShadow: { repeat: Infinity, duration: 1.5 }
                                         }}
-                                        exit={{ opacity: 0, scale: 0.98 }}
-                                        className={`absolute transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2 ${
+                                        exit={{ opacity: 0, scale: 0.95 }}
+                                        className={`absolute transition-all duration-500 transform -translate-x-1/2 -translate-y-1/2 ${
                                           activeAlerts.some(a => a.plate === det.plate)
-                                            ? 'border-error border-[1.5px] z-50'
-                                            : 'border-blue-400/70 border-[1px] z-40'
+                                            ? 'border-error border-[2px] z-50'
+                                            : 'border-blue-400 border-[1.5px] z-40'
                                         }`}
                                         style={{
                                           left: `${(centerX / 1000) * 100}%`,
                                           top: `${(centerY / 1000) * 100}%`,
                                           width: `${(drawWidth / 1000) * 100}%`,
                                           height: `${(drawHeight / 1000) * 100}%`,
-                                          borderRadius: '0px'
+                                          borderRadius: '2px'
                                         }}
                                       >
                                         {/* Technical Framing Brackets */}

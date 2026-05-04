@@ -295,29 +295,43 @@ app.get("/api/stats", async (req, res) => {
 
 app.get("/api/history", async (req, res) => {
   const plate = req.query.plate as string;
+  const start = req.query.start as string;
   
   try {
     if (supabase) {
       let query = supabase
         .from('vehicle_records')
         .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(100);
+        .order('timestamp', { ascending: false });
       
       if (plate) {
         query = query.ilike('plate_number', `%${plate}%`);
       }
+      if (start) {
+        query = query.gte('timestamp', start);
+      }
       
-      const { data, error } = await query;
+      const { data, error } = await query.limit(100);
       if (error) throw error;
       return res.json(data || []);
     } else {
       let query = "SELECT *, plate as plate_number, image as image_url FROM history";
       const params: any[] = [];
+      const conditions: string[] = [];
+      
       if (plate) {
-        query += " WHERE plate LIKE ?";
+        conditions.push("plate LIKE ?");
         params.push(`%${plate}%`);
       }
+      if (start) {
+        conditions.push("timestamp >= ?");
+        params.push(start);
+      }
+      
+      if (conditions.length > 0) {
+        query += " WHERE " + conditions.join(" AND ");
+      }
+      
       query += " ORDER BY timestamp DESC LIMIT 100";
       
       db.all(query, params, (err, rows) => {
@@ -331,18 +345,31 @@ app.get("/api/history", async (req, res) => {
 });
 
 app.get("/api/logs", async (req, res) => {
+  const start = req.query.start as string;
   try {
     if (supabase) {
-      const { data, error } = await supabase
+      let query = supabase
         .from('system_logs')
         .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(50);
+        .order('timestamp', { ascending: false });
+      
+      if (start) {
+        query = query.gte('timestamp', start);
+      }
+      
+      const { data, error } = await query.limit(50);
       
       if (error) {
         // Fallback to SQLite if table doesn't exist in Supabase yet
         console.warn("Supabase system_logs fetch failed, falling back to SQLite:", error.message);
-        db.all("SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT 50", (err, rows) => {
+        let sql = "SELECT * FROM system_logs";
+        const params: any[] = [];
+        if (start) {
+          sql += " WHERE timestamp >= ?";
+          params.push(start);
+        }
+        sql += " ORDER BY timestamp DESC LIMIT 50";
+        db.all(sql, params, (err, rows) => {
           if (err) return res.status(500).json({ error: err.message });
           res.json(rows || []);
         });
@@ -350,7 +377,14 @@ app.get("/api/logs", async (req, res) => {
       }
       return res.json(data || []);
     } else {
-      db.all("SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT 50", (err, rows) => {
+      let sql = "SELECT * FROM system_logs";
+      const params: any[] = [];
+      if (start) {
+        sql += " WHERE timestamp >= ?";
+        params.push(start);
+      }
+      sql += " ORDER BY timestamp DESC LIMIT 50";
+      db.all(sql, params, (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows || []);
       });
@@ -361,18 +395,20 @@ app.get("/api/logs", async (req, res) => {
 });
 
 app.get("/api/search", async (req, res) => {
-  const { plate } = req.query;
+  const { plate, start } = req.query;
 
   try {
     if (supabase) {
       let queryBuilder = supabase
         .from('vehicle_records')
         .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(20);
+        .order('timestamp', { ascending: false });
 
       if (plate) {
         queryBuilder = queryBuilder.ilike('plate_number', `%${plate}%`);
+      }
+      if (start) {
+        queryBuilder = queryBuilder.gte('timestamp', start);
       }
       
       const { data, error } = await queryBuilder.limit(40);
@@ -387,10 +423,21 @@ app.get("/api/search", async (req, res) => {
       return new Promise((resolve) => {
         let query = "SELECT *, plate as plate_number, image as image_url FROM history";
         const params: any[] = [];
+        const conditions: string[] = [];
+        
         if (plate) {
-          query += " WHERE plate LIKE ?";
+          conditions.push("plate LIKE ?");
           params.push(`%${plate}%`);
         }
+        if (start) {
+          conditions.push("timestamp >= ?");
+          params.push(start);
+        }
+        
+        if (conditions.length > 0) {
+          query += " WHERE " + conditions.join(" AND ");
+        }
+        
         query += " ORDER BY timestamp DESC LIMIT 40";
         
         db.all(query, params, (err, rows) => {
