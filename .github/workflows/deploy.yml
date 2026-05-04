@@ -34,6 +34,9 @@ jobs:
           # If you use Gemini on the client (not recommended, but for static builds sometimes needed)
           # VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
 
+      - name: Build
+        run: npm run build
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
