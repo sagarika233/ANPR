@@ -27,8 +27,8 @@ jobs:
 
       - name: Clean and reinstall dependencies
         run: |
-         rm -rf node_modules package-lock.json
-         npm install
+          rm -rf node_modules package-lock.json
+          npm install
 
       #- name: Rebuild native modules
         #run: npm rebuild
