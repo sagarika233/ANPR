@@ -77,6 +77,7 @@ export default function LiveView() {
   const [liveDetections, setLiveDetections] = useState<any[]>([]);
   const [sessionScans, setSessionScans] = useState(0);
   const [sessionAlertsCount, setSessionAlertsCount] = useState(0);
+  const [latestScanCount, setLatestScanCount] = useState<number | null>(null);
   const [currentDetections, setCurrentDetections] = useState<DetectionResult[]>([]);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -467,6 +468,10 @@ export default function LiveView() {
               
               if (validDetections.length > 0) {
                 setCurrentDetections(validDetections);
+                setLatestScanCount(validDetections.length);
+                
+                // Clear state after 5 seconds
+                setTimeout(() => setLatestScanCount(null), 5000);
                 
                 // Perform backend saves in parallel without blocking UI update
                 Promise.all(validDetections.map(det => 
@@ -778,11 +783,18 @@ export default function LiveView() {
         
         if (validDetections.length > 0) {
           setCurrentDetections(validDetections);
+          setLatestScanCount(validDetections.length);
+
+          // Clear state after 5 seconds
+          setTimeout(() => setLatestScanCount(null), 5000);
           
           // Parallel save
           Promise.all(validDetections.map(det => 
             saveDetectionToBackend({ ...det, image: imageToDetect || "" })
           )).catch(err => console.error("Manual save error:", err));
+        } else {
+          setLatestScanCount(0);
+          setTimeout(() => setLatestScanCount(null), 3000);
         }
       }
     } catch (error: any) {
@@ -982,6 +994,42 @@ export default function LiveView() {
 
             {/* Display Area */}
             <div className="relative aspect-[4/3] sm:aspect-video bg-black group overflow-hidden">
+              {/* Detection Status Indicator */}
+              <AnimatePresence>
+                {latestScanCount !== null && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: -20, x: '-50%' }}
+                    animate={{ opacity: 1, y: 0, x: '-50%' }}
+                    exit={{ opacity: 0, y: -10, x: '-50%' }}
+                    className={`absolute top-4 sm:top-8 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 sm:px-6 sm:py-3 rounded-full shadow-2xl flex items-center gap-2 sm:gap-3 backdrop-blur-xl border ${
+                      latestScanCount > 0 
+                        ? 'bg-emerald-500/90 text-white border-white/20' 
+                        : 'bg-surface-container-highest/80 text-on-surface border-outline/20'
+                    }`}
+                  >
+                    {latestScanCount > 0 ? (
+                      <>
+                        <div className="relative">
+                          <Car size={16} className="sm:w-5 sm:h-5" />
+                          <motion.div 
+                            animate={{ scale: [1, 1.5, 1], opacity: [1, 0, 1] }}
+                            transition={{ repeat: Infinity, duration: 2 }}
+                            className="absolute -top-1 -right-1 w-2 h-2 bg-white rounded-full"
+                          />
+                        </div>
+                        <span className="text-[10px] sm:text-xs font-black uppercase tracking-widest leading-none">
+                          {latestScanCount} plate{latestScanCount > 1 ? 's' : ''} detected
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest leading-none opacity-80">
+                        No plates detected
+                      </span>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* Active Alerts Overlay */}
               <div className="absolute top-2 right-2 sm:top-6 sm:right-6 z-50 flex flex-col gap-2 sm:gap-4 pointer-events-none w-full max-w-[200px] sm:max-w-[320px]">
                 <AnimatePresence>
