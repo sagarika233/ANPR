@@ -36,6 +36,12 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          # These secrets must be added in GitHub Repository Settings
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # If you use Gemini on the client (not recommended, but for static builds sometimes needed)
+          # VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
